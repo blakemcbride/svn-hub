@@ -46,6 +46,9 @@
 # Uncomment the following line to run the EveryMinute.groovy file
 #* * * * * EveryMinute
 
+# SvnHub: ingest the svnserve operational log into the statistics firehose every minute.
+* * * * * IngestSvnLogs
+
 # SvnHub: refresh cached HEAD revision and warm the commit cache every 5 minutes.
 */5 * * * * RefreshRepoHead
 
