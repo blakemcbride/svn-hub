@@ -8,7 +8,6 @@
     const WS = 'services/Users';
 
     const columnDefs = [
-        {headerName: 'User Name', field: 'userName', flex: 1},
         {headerName: 'Full Name', field: 'fullName', flex: 2},
         {headerName: 'Email', field: 'email', flex: 2},
         {headerName: 'Admin', field: 'isAdmin', width: 90},
