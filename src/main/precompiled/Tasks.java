@@ -669,6 +669,12 @@ public class Tasks {
     private static LocalDependencies buildLocalDependencies() {
         final LocalDependencies dep = new LocalDependencies();
         dep.add(LIBS, "abcl.jar");
+        // SVNKit (pure-Java Subversion) + its runtime deps.  Used by the
+        // SvnHub backend services for repository browse/history/diff/admin/merge.
+        dep.add(LIBS, "svnkit-1.10.11.jar");
+        dep.add(LIBS, "sqljet-1.1.13.jar");
+        dep.add(LIBS, "sequence-library-1.0.4.jar");
+        dep.add(LIBS, "antlr-runtime-3.5.2.jar");
         return dep;
     }
 

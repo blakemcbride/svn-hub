@@ -7,45 +7,27 @@
 
     const screenArea = 'app-screen-area';
 
-    $$('rest-services').onclick(function () {
-        Utils.cleanup();  //  clean up any context information
-        Utils.loadPage('screens/RestServices/RestServices', screenArea, 'input-1');
+    $$('repositories').onclick(function () {
+        Utils.cleanup();
+        Utils.loadPage('screens/Repositories/Repositories', screenArea);
     });
 
-    $$('controls').onclick(function () {
-        Utils.cleanup();  //  clean up any context information
-        Utils.loadPage('screens/Controls/Controls', screenArea, 'ctl-text');
-    });
-
-    $$('crud').onclick(function () {
-        Utils.cleanup();  //  clean up any context information
-        Utils.loadPage('screens/CRUD/CRUD', screenArea);
+    $$('insights').onclick(function () {
+        Utils.cleanup();
+        Utils.loadPage('screens/Insights/Insights', screenArea);
     });
 
     $$('users').onclick(function () {
-        Utils.cleanup();  //  clean up any context information
+        Utils.cleanup();
         Utils.loadPage('screens/Users/Users', screenArea);
-    });
-
-    $$('file-upload').onclick(function () {
-        Utils.cleanup();  //  clean up any context information
-        Utils.loadPage('screens/FileUploadScreen/FileUploadScreen', screenArea);
-    });
-
-    $$('ai').onclick(function () {
-        Utils.cleanup();  //  clean up any context information
-        Utils.loadPage('screens/Ollama/Ollama', screenArea);
     });
 
     $$('logout').onclick(function () {
         Server.logout();
     });
 
-    // show the startup message
-    Utils.popup_open('intro-popup');
-    $$('close-intro').onclick(function () {
-        Utils.popup_close();
-    });
-
+    // Land on the repository list by default.
+    Utils.cleanup();
+    Utils.loadPage('screens/Repositories/Repositories', screenArea);
 
 })();

@@ -166,3 +166,13 @@ src/main/frontend/lib/jquery*
 
 /build/
 manual/asciidoc/
+
+# SvnHub
+# ------
+# application.ini holds the real DB password and SVN service credentials; keep
+# it out of version control (the framework reads it from the working tree).
+src/main/backend/application.ini
+# Local dev SVN repositories, svnserve auth config, and operational log.
+/dev-repos/
+# Legacy demo database (SvnHub runs on PostgreSQL).
+src/main/backend/DB.sqlite
