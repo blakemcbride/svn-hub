@@ -36,7 +36,7 @@ class Login {
      * @return
      */
     public static UserData login(Connection db, String user, String password, JSONObject outjson, ProcessServlet servlet) {
-        Record rec = db.fetchOne("select user_id, user_password from users where user_name = ? and user_active = 'Y'", user)
+        Record rec = db.fetchOne("select user_id, user_password, is_admin from users where user_name = ? and user_active = 'Y'", user)
         if (rec == null)
             return null    //  invalid user
         String pw = rec.getString("user_password")
@@ -45,8 +45,8 @@ class Login {
         if (!passwordMatches(pw, password))
             return null
         UserData ud = UserCache.newUser(user, password, (Integer) rec.getInt("user_id"))
-//        ud.putUserData("abc", 5)    add any user specific data to save on the back-end
-//        outjson.put("user_type", "xxx")    data sent back to the front-end
+        // Let the front-end gate admin-only UI (the back-end still enforces it).
+        outjson.put("isAdmin", "Y".equals(rec.getString("is_admin")))
         return ud
     }
 

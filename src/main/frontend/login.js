@@ -18,6 +18,7 @@
         const res = await Server.call('', 'Login', data);
         if (res._Success) {
             Server.setUUID(res.uuid);
+            Utils.saveData('isAdmin', res.isAdmin === true);
             DOMUtils.preventNavigation(true, function() {
                 Utils.yesNo('Confirm', 'Are you sure you want to logout?', function() {
                     Server.logout();
@@ -30,6 +31,10 @@
     }
 
     $$('login').onclick(login);
+
+    $$('to-register').onclick(function () {
+        Utils.loadPage('register');
+    });
 
     $$('username').onEnter(function () {
         $$('password').focus();

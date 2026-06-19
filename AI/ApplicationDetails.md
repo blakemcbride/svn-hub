@@ -25,6 +25,21 @@ framework reference — read it before changing framework code.
 - First-version collaboration: README rendering, Issues, Merge requests. (Full-text
   search, stars/watch, releases, wiki are deferred.)
 
+## User model & repository visibility
+- **Two classes of user:** `regular` (default) and `admin` (`users.is_admin`). Anyone can
+  **self-register** (GitHub-style, no email verification) via the public `Register` service
+  (allow-listed in `KissInit.groovy`); self-registered users are regular. Only an **admin**
+  can promote a user or manage accounts — the `Users` service is admin-gated and its nav
+  item is hidden for regular users. Registration captures a single password used for both
+  web login (PBKDF2 hash) and `svn` checkouts (clear text in svnserve's passwd).
+- **Ownership & visibility:** each `repository` has an `owner_id` (creator) and a
+  `visibility` of `public` or `private`. "My Repositories" (`getRepositories`) shows repos
+  the user owns or is granted; **Explore** (`searchRepositories`) finds *other* repos they
+  may checkout/clone — all `public` repos plus any private ones they're granted. A public
+  repo's authz gets a `* = r` catch-all so any authenticated user can checkout, and
+  `RepoAccess.canRead` honors `public` so web browsing matches. Each repo row carries a
+  `checkoutUrl` built from `SvnBaseUrl`. Changing visibility re-emits the repo's authz.
+
 ## Two independent SVN touch-points
 - **SVNKit** is how SvnHub *itself* reads/administers/merges repos (over `file://`).
 - **svnserve `--log-file`** is how SvnHub learns what *other developers* did

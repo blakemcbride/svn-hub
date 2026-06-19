@@ -41,6 +41,8 @@ CREATE TABLE repository (
     name             character varying(200) NOT NULL,
     fs_path          character varying(500) NOT NULL,          -- absolute path of the FSFS repo on disk
     description      character varying(2000),
+    owner_id         integer                REFERENCES users(user_id),  -- the user who created it
+    visibility       character varying(10)  NOT NULL DEFAULT 'private', -- public => any user may checkout/clone
     default_branch   character varying(200) DEFAULT 'trunk',
     discovered       character(1)           NOT NULL DEFAULT 'N',  -- auto-provisioned by the log ingest?
     is_active        character(1)           NOT NULL DEFAULT 'Y',
@@ -48,7 +50,8 @@ CREATE TABLE repository (
     head_revision    integer,                                  -- cached youngest revision
     head_revision_ts bigint,                                   -- commit ts of HEAD
     CONSTRAINT repository_disc_chk   CHECK (discovered = 'Y' OR discovered = 'N'),
-    CONSTRAINT repository_active_chk CHECK (is_active  = 'Y' OR is_active  = 'N')
+    CONSTRAINT repository_active_chk CHECK (is_active  = 'Y' OR is_active  = 'N'),
+    CONSTRAINT repository_vis_chk    CHECK (visibility IN ('public','private'))
 );
 
 -- ----------------------------------------------------------------------------

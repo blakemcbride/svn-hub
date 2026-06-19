@@ -56,10 +56,11 @@ public final class SvnAuthManager {
      * @param sharedPasswdPath absolute path of the shared passwd file referenced by svnserve.conf
      */
     public static void regenerateRepoAuth(Connection db, int repoId, String sharedPasswdPath) throws Exception {
-        Record repo = db.fetchOne("select fs_path from repository where repo_id = ?", repoId);
+        Record repo = db.fetchOne("select fs_path, visibility from repository where repo_id = ?", repoId);
         if (repo == null)
             return;
         String fsPath = repo.getString("fs_path");
+        boolean publicRead = "public".equals(repo.getString("visibility"));
 
         List<Record> access = db.fetchAll(
                 "select u.user_name, ra.can_read, ra.can_write " +
@@ -79,7 +80,7 @@ public final class SvnAuthManager {
 
         String confDir = fsPath + "/conf";
         // authz-db is relative to the repo's conf dir; password-db is the shared absolute path.
-        SvnAuth.writeFile(confDir + "/authz", SvnAuth.buildAuthz(perms));
+        SvnAuth.writeFile(confDir + "/authz", SvnAuth.buildAuthz(perms, publicRead));
         SvnAuth.writeFile(confDir + "/svnserve.conf",
                 SvnAuth.buildSvnserveConf(sharedPasswdPath, "authz", REALM));
     }

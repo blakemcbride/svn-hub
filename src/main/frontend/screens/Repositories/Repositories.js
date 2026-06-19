@@ -6,34 +6,57 @@
     const WS_REPO = 'services/RepositoryService';
     const WS_ACC = 'services/RepositoryAccessService';
 
-    let isAdmin = false;
+    let isAdmin = Utils.getData('isAdmin') === true;
     let currentRepo = null;
     let accessRepoId = null;
     let accSelected = null;
 
-    // ---- repository list ----
     const repoCols = [
         {headerName: 'Name', field: 'name', flex: 2},
         {headerName: 'Key', field: 'repoKey', flex: 1},
-        {headerName: 'Description', field: 'description', flex: 3},
-        {headerName: 'HEAD', field: 'headRevision', width: 90}
+        {headerName: 'Visibility', field: 'visibility', width: 110},
+        {headerName: 'Owner', field: 'ownerLabel', width: 90},
+        {headerName: 'HEAD', field: 'headRevision', width: 80}
     ];
     const repoGrid = new AGGrid('repo-grid', repoCols, 'repoId');
     repoGrid.show();
 
-    async function loadRepos() {
+    function toRow(r) {
+        return Object.assign({}, r, {ownerLabel: r.owned ? 'you' : ''});
+    }
+
+    async function loadMine() {
+        $$('repo-heading').setValue('My Repositories');
         repoGrid.clear();
         $$('repo-access').disable();
+        $$('repo-checkout-url').clear();
         const res = await Server.call(WS_REPO, 'getRepositories');
         if (res._Success) {
             isAdmin = res.isAdmin;
-            repoGrid.addRecords(res.rows);
+            repoGrid.addRecords(res.rows.map(toRow));
         }
     }
 
+    async function loadExplore() {
+        $$('repo-heading').setValue('Explore Repositories');
+        repoGrid.clear();
+        $$('repo-access').disable();
+        $$('repo-checkout-url').clear();
+        const res = await Server.call(WS_REPO, 'searchRepositories', {query: $$('repo-search').getValue()});
+        if (res._Success)
+            repoGrid.addRecords(res.rows.map(toRow));
+    }
+
+    $$('mode-mine').onclick(loadMine);
+    $$('mode-explore').onclick(loadExplore);
+    $$('repo-search-go').onclick(loadExplore);
+    $$('repo-search').onEnter(loadExplore);
+
     repoGrid.setOnSelectionChanged((rows) => {
         currentRepo = repoGrid.getSelectedRow();
-        $$('repo-access').enable(rows && isAdmin);
+        $$('repo-checkout-url').setValue(currentRepo ? (currentRepo.checkoutUrl || '') : '');
+        // Manage access only for repos you own or administer.
+        $$('repo-access').enable(rows && currentRepo && (isAdmin || currentRepo.owned));
     });
     repoGrid.setOnRowDoubleClicked(openRepo);
 
@@ -54,6 +77,10 @@
         $$('nr-key').clear();
         $$('nr-name').clear();
         $$('nr-desc').clear();
+        $$('nr-visibility').clear();
+        $$('nr-visibility').add('private', 'Private');
+        $$('nr-visibility').add('public', 'Public (anyone can checkout)');
+        $$('nr-visibility').setValue('private');
         $$('nr-layout').setValue(true);
         Utils.popup_open('new-repo-popup', 'nr-key');
     });
@@ -65,21 +92,22 @@
             repoKey: $$('nr-key').getValue().trim(),
             name: $$('nr-name').getValue().trim(),
             description: $$('nr-desc').getValue().trim(),
+            visibility: $$('nr-visibility').getValue(),
             standardLayout: $$('nr-layout').getValue()
         };
         const res = await Server.call(WS_REPO, 'createRepository', data);
         if (res._Success) {
             Utils.popup_close();
-            await loadRepos();
+            await loadMine();
         }
     });
 
-    // ---- scan disk ----
+    // ---- scan disk (admin) ----
     $$('repo-scan').onclick(async () => {
         const res = await Server.call(WS_REPO, 'scanRepositories');
         if (res._Success) {
             Utils.showMessage('Scan complete', 'Added ' + res.added + ' repository(ies).');
-            await loadRepos();
+            await loadMine();
         }
     });
 
@@ -98,7 +126,6 @@
         accSelected = accGrid.getSelectedRow();
         $$('acc-revoke').enable(rows);
         if (accSelected) {
-            // Load the selected grant into the form so "Apply" updates it.
             $$('acc-user').setValue(String(accSelected.userId));
             $$('acc-read').setValue(accSelected.canRead === 'Y');
             $$('acc-write').setValue(accSelected.canWrite === 'Y');
@@ -138,14 +165,13 @@
             Utils.showMessage('Select a user', 'Choose a user to grant access to.');
             return;
         }
-        const data = {
+        const res = await Server.call(WS_ACC, 'grant', {
             repoId: accessRepoId,
             userId: parseInt(uid, 10),
             canRead: $$('acc-read').getValue(),
             canWrite: $$('acc-write').getValue(),
             canAdmin: $$('acc-admin').getValue()
-        };
-        const res = await Server.call(WS_ACC, 'grant', data);
+        });
         if (res._Success)
             await loadAccess();
     });
@@ -160,6 +186,6 @@
         });
     });
 
-    await loadRepos();
+    await loadMine();
 
 })();

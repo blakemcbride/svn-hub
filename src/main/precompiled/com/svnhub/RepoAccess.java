@@ -24,6 +24,10 @@ public final class RepoAccess {
     public static boolean canRead(Connection db, int userId, int repoId) throws Exception {
         if (isAdmin(db, userId))
             return true;
+        // Public repositories are readable by any user (mirrors svnserve's "* = r").
+        Record repo = db.fetchOne("select visibility from repository where repo_id = ?", repoId);
+        if (repo != null && "public".equals(repo.getString("visibility")))
+            return true;
         Record ra = db.fetchOne("select can_read from repository_access where repo_id = ? and user_id = ?", repoId, userId);
         return ra != null && "Y".equals(ra.getString("can_read"));
     }

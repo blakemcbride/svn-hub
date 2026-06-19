@@ -34,11 +34,42 @@ class RepositoryService {
                     join repository_access ra on ra.repo_id = r.repo_id
                     where r.is_active = 'Y' and ra.user_id = ? and ra.can_read = 'Y'
                     order by r.name""", userId)
+        String base = baseUrl()
         JSONArray rows = new JSONArray()
         for (Record r : recs)
-            rows.put(repoRow(r))
+            rows.put(repoRow(r, userId, base))
         outjson.put("rows", rows)
         outjson.put("isAdmin", admin)
+    }
+
+    /**
+     * Discover other repositories the caller may checkout/clone: public ones, plus
+     * any private repos they have been granted read access to.  Optional `query`
+     * filters by name or key.
+     */
+    void searchRepositories(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
+        Integer userId = currentUser(servlet)
+        boolean admin = RepoAccess.isAdmin(db, userId)
+        String q = injson.getString("query", "")
+        if (q != null)
+            q = q.trim()
+        String like = "%" + (q == null ? "" : q.toLowerCase()) + "%"
+        List<Record> recs
+        if (admin)
+            recs = db.fetchAll("""select * from repository where is_active = 'Y'
+                    and (lower(name) like ? or lower(repo_key) like ?) order by name""", like, like)
+        else
+            recs = db.fetchAll("""select r.* from repository r
+                    where r.is_active = 'Y' and (lower(r.name) like ? or lower(r.repo_key) like ?)
+                    and ( r.visibility = 'public'
+                          or exists (select 1 from repository_access ra
+                                     where ra.repo_id = r.repo_id and ra.user_id = ? and ra.can_read = 'Y') )
+                    order by r.name""", like, like, userId)
+        String base = baseUrl()
+        JSONArray rows = new JSONArray()
+        for (Record r : recs)
+            rows.put(repoRow(r, userId, base))
+        outjson.put("rows", rows)
     }
 
     /** A single repository plus the caller's access level. */
@@ -49,7 +80,7 @@ class RepositoryService {
         Record r = db.fetchOne("select * from repository where repo_id = ?", repoId)
         if (r == null)
             throw new UserException("Repository not found.")
-        outjson.put("repo", repoRow(r))
+        outjson.put("repo", repoRow(r, userId, baseUrl()))
         outjson.put("access", accessJson(db, userId, repoId))
     }
 
@@ -66,6 +97,9 @@ class RepositoryService {
             name = name.trim()
         String description = injson.getString("description", "")
         boolean stdLayout = injson.getBoolean("standardLayout", true)
+        String visibility = injson.getString("visibility", "private")
+        if (visibility != "public" && visibility != "private")
+            visibility = "private"
 
         if (!repoKey || !(repoKey ==~ /[A-Za-z0-9_-]{1,100}/))
             throw new UserException("Invalid repository key. Use 1-100 letters, digits, dash or underscore.")
@@ -88,6 +122,8 @@ class RepositoryService {
         rec.set("name", name)
         rec.set("fs_path", fsPath)
         rec.set("description", description)
+        rec.set("owner_id", userId)
+        rec.set("visibility", visibility)
         rec.set("default_branch", stdLayout ? "trunk" : null)
         rec.set("discovered", "N")
         rec.set("is_active", "Y")
@@ -132,7 +168,18 @@ class RepositoryService {
             r.set("default_branch", injson.getString("defaultBranch"))
         if (injson.has("isActive"))
             r.set("is_active", injson.getBoolean("isActive") ? "Y" : "N")
+        boolean visChanged = false
+        if (injson.has("visibility")) {
+            String v = injson.getString("visibility")
+            if (v == "public" || v == "private") {
+                r.set("visibility", v)
+                visChanged = true
+            }
+        }
         r.update()
+        // Visibility drives the catch-all authz rule, so re-emit it.
+        if (visChanged)
+            SvnAuthManager.regenerateRepoAuth(db, repoId, sharedPasswdPath())
     }
 
     // ------------------------------------------------------------------- scan
@@ -210,18 +257,28 @@ class RepositoryService {
         return a
     }
 
-    private static JSONObject repoRow(Record r) {
+    private static JSONObject repoRow(Record r, Integer userId, String base) {
         JSONObject o = new JSONObject()
         o.put("repoId", r.getInt("repo_id"))
         o.put("repoKey", r.getString("repo_key"))
         o.put("name", r.getString("name"))
         o.put("description", r.getString("description"))
+        o.put("visibility", r.getString("visibility"))
+        Integer ownerId = r.getInt("owner_id")
+        o.put("ownerId", ownerId)
+        o.put("owned", ownerId != null && ownerId == userId)
         o.put("defaultBranch", r.getString("default_branch"))
         o.put("discovered", r.getString("discovered"))
         o.put("isActive", r.getString("is_active"))
         o.put("headRevision", r.getInt("head_revision"))
         o.put("headRevisionTs", r.getLong("head_revision_ts"))
         o.put("createdTs", r.getLong("created_ts"))
+        o.put("checkoutUrl", (base ? base : "") + "/" + r.getString("repo_key"))
         return o
+    }
+
+    private static String baseUrl() {
+        String b = MainServlet.getEnvironment("SvnBaseUrl")
+        return b == null ? "" : b.replaceAll('/$', '')
     }
 }

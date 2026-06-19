@@ -7,7 +7,9 @@ import org.kissweb.database.Record
 import org.kissweb.restServer.ProcessServlet
 import org.kissweb.restServer.MainServlet
 import org.kissweb.PasswordHash
+import org.kissweb.UserException
 import com.svnhub.SvnAuthManager
+import com.svnhub.RepoAccess
 
 /**
  * User administration for SvnHub.  Manages the login credential (PBKDF2 hash),
@@ -21,6 +23,7 @@ class Users {
             outjson.put("nodb", true)
             return
         }
+        requireAdmin(db, servlet)
         List<Record> recs = db.fetchAll("""select user_id, user_name, full_name, email, is_admin,
                 user_active, svn_password from users order by user_name""")
         JSONArray rows = new JSONArray()
@@ -39,6 +42,7 @@ class Users {
     }
 
     void addRecord(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
+        requireAdmin(db, servlet)
         Record rec = db.newRecord("users")
         rec.set("user_name", injson.getString("userName"))
         rec.set("user_password", PasswordHash.hash(injson.getString("userPassword")))
@@ -57,6 +61,7 @@ class Users {
     }
 
     void updateRecord(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
+        requireAdmin(db, servlet)
         Record rec = db.fetchOne("select * from users where user_id = ?", injson.getInt("id"))
         rec.set("user_name", injson.getString("userName"))
         rec.set("full_name", injson.getString("fullName", ""))
@@ -77,8 +82,15 @@ class Users {
     }
 
     void deleteRecord(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
+        requireAdmin(db, servlet)
         db.execute("delete from users where user_id = ?", injson.getInt("id"))
         regeneratePasswd(db)
+    }
+
+    private static void requireAdmin(Connection db, ProcessServlet servlet) {
+        Integer userId = (Integer) servlet.getUserData().getUserId()
+        if (!RepoAccess.isAdmin(db, userId))
+            throw new UserException("Administrator access is required to manage users.")
     }
 
     private static void regeneratePasswd(Connection db) {

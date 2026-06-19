@@ -13,8 +13,8 @@ class KissInit {
 
         MainServlet.readIniFile "application.ini", "main"
 
-        // Example of how to specify a method that is allowed without authentication
-    //    MainServlet.allowWithoutAuthentication("services.MyGroovyService", "addNumbers")
+        // Public self-registration is the one method callable without authentication.
+        MainServlet.allowWithoutAuthentication("services.Register", "register")
 
         // Set up a global logout handler that runs whenever any user logs out
         // This can be used for cleanup tasks like logging, closing resources, etc.

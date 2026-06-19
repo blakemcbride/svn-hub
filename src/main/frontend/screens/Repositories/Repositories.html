@@ -1,7 +1,19 @@
 <div>
-    <h2 style="margin-top: 0;">Repositories</h2>
+    <h2 style="margin-top: 0;"><text-label id="repo-heading"></text-label></h2>
 
-    <div id="repo-grid" style="width: 100%; height: calc(100vh - 230px);"></div>
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <push-button id="mode-mine">My Repositories</push-button>
+        <push-button id="mode-explore">Explore</push-button>
+        <text-input id="repo-search" placeholder="search name or key" style="width: 240px;"></text-input>
+        <push-button id="repo-search-go">Search</push-button>
+    </div>
+
+    <div id="repo-grid" style="width: 100%; height: calc(100vh - 290px);"></div>
+
+    <div style="margin-top: 10px;">
+        <span style="color:#57606a;">Checkout URL:</span>
+        <text-input id="repo-checkout-url" style="width: 360px;" readonly></text-input>
+    </div>
 
     <div style="margin-top: 14px;">
         <push-button id="repo-open">Open</push-button>
@@ -26,6 +38,10 @@
                 <div style="margin-bottom: 8px;">
                     <div>Description:</div>
                     <text-input id="nr-desc" style="width: 360px"></text-input>
+                </div>
+                <div style="margin-bottom: 8px;">
+                    Visibility:
+                    <drop-down id="nr-visibility" style="width: 200px;"></drop-down>
                 </div>
                 <div style="margin-bottom: 8px;">
                     <check-box id="nr-layout">Create standard layout (trunk, branches, tags)</check-box>

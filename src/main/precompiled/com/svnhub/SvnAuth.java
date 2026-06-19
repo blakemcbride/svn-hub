@@ -52,11 +52,12 @@ public final class SvnAuth {
     /**
      * Build a per-repository {@code authz} body.
      *
-     * @param userPerms rows of {username, perm} where perm is "rw" or "r".
-     *                  A deny-all ({@code * =}) line is always appended so the
-     *                  repository is private by default.
+     * @param userPerms  rows of {username, perm} where perm is "rw" or "r".
+     * @param publicRead when true the catch-all line is {@code * = r} (any
+     *                   authenticated user may read/checkout); otherwise it is a
+     *                   deny-all ({@code * =}) so the repository is private.
      */
-    public static String buildAuthz(List<String[]> userPerms) {
+    public static String buildAuthz(List<String[]> userPerms, boolean publicRead) {
         StringBuilder sb = new StringBuilder();
         sb.append("# Managed by SvnHub - do not edit by hand.\n");
         sb.append("[/]\n");
@@ -67,7 +68,7 @@ public final class SvnAuth {
                 continue;
             sb.append(user).append(" = ").append(perm).append('\n');
         }
-        sb.append("* =\n");
+        sb.append(publicRead ? "* = r\n" : "* =\n");
         return sb.toString();
     }
 

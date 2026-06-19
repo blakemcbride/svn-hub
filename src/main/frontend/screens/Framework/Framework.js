@@ -26,6 +26,10 @@
         Server.logout();
     });
 
+    // User administration is admin-only; hide it for regular users.
+    if (Utils.getData('isAdmin') !== true)
+        $$('users').hide();
+
     // Land on the repository list by default.
     Utils.cleanup();
     Utils.loadPage('screens/Repositories/Repositories', screenArea);
