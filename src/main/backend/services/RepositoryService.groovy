@@ -57,14 +57,16 @@ class RepositoryService {
         List<Record> recs
         if (admin)
             recs = db.fetchAll("""select * from repository where is_active = 'Y'
-                    and (lower(name) like ? or lower(repo_key) like ?) order by name""", like, like)
+                    and (lower(name) like ? or lower(coalesce(description,'')) like ? or lower(repo_key) like ?)
+                    order by name""", like, like, like)
         else
             recs = db.fetchAll("""select r.* from repository r
-                    where r.is_active = 'Y' and (lower(r.name) like ? or lower(r.repo_key) like ?)
+                    where r.is_active = 'Y'
+                    and (lower(r.name) like ? or lower(coalesce(r.description,'')) like ? or lower(r.repo_key) like ?)
                     and ( r.visibility = 'public'
                           or exists (select 1 from repository_access ra
                                      where ra.repo_id = r.repo_id and ra.user_id = ? and ra.can_read = 'Y') )
-                    order by r.name""", like, like, userId)
+                    order by r.name""", like, like, like, userId)
         String base = baseUrl()
         JSONArray rows = new JSONArray()
         for (Record r : recs)

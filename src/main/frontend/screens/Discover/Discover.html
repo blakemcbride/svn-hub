@@ -7,18 +7,19 @@
     </style>
 
     <h2 style="margin-top: 0;">Discover</h2>
-    <div class="disc-hint">Find people and browse their public repositories.</div>
+    <div class="disc-hint">Search people, project names, and descriptions (partial matches are fine).</div>
 
     <div class="disc-controls" style="margin-top: 10px;">
-        <text-input id="disc-search" placeholder="search by username or name" style="width: 300px;"></text-input>
+        <text-input id="disc-search" placeholder="search people or projects" style="width: 320px;"></text-input>
         <push-button id="disc-search-go">Search</push-button>
     </div>
 
-    <div id="people-grid" style="width: 100%; height: 240px;"></div>
+    <div class="disc-section">People</div>
+    <div id="people-grid" style="width: 100%; height: 190px;"></div>
 
-    <div class="disc-section"><text-label id="disc-profile-title">Select a person to view their repositories</text-label></div>
-    <div class="disc-hint"><text-label id="disc-profile-sub"></text-label></div>
-    <div id="profile-repos-grid" style="width: 100%; height: 280px; margin-top: 6px;"></div>
+    <div class="disc-section"><text-label id="disc-repos-title">Projects</text-label></div>
+    <div class="disc-hint"><text-label id="disc-repos-sub"></text-label></div>
+    <div id="repos-grid" style="width: 100%; height: 280px; margin-top: 6px;"></div>
 
     <div class="disc-bottom-pad"></div>
 </div>

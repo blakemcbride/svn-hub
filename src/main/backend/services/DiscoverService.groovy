@@ -44,6 +44,32 @@ class DiscoverService {
         outjson.put("rows", rows)
     }
 
+    /**
+     * Search public repositories by name, description, or key (all substring, case-insensitive).
+     * Admins additionally see private repos.
+     */
+    void searchRepos(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
+        Integer viewerId = (Integer) servlet.getUserData().getUserId()
+        boolean admin = RepoAccess.isAdmin(db, viewerId)
+        String q = injson.getString("query", "")
+        if (q != null)
+            q = q.trim().toLowerCase()
+        String like = "%" + (q == null ? "" : q) + "%"
+        String match = "(lower(name) like ? or lower(coalesce(description,'')) like ? or lower(repo_key) like ?)"
+        List<Record> recs
+        if (admin)
+            recs = db.fetchAll("select * from repository where is_active = 'Y' and " + match + " order by name",
+                    like, like, like)
+        else
+            recs = db.fetchAll("select * from repository where is_active = 'Y' and visibility = 'public' and " + match + " order by name",
+                    like, like, like)
+        String base = baseUrl()
+        JSONArray rows = new JSONArray()
+        for (Record r : recs)
+            rows.put(repoJson(r, base))
+        outjson.put("rows", rows)
+    }
+
     /** A user's public profile: their info plus their public repositories (and private ones if the viewer owns them or is an admin). */
     void getProfile(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
         Integer viewerId = (Integer) servlet.getUserData().getUserId()
@@ -72,20 +98,25 @@ class DiscoverService {
 
         String base = baseUrl()
         JSONArray rows = new JSONArray()
-        for (Record r : repos) {
-            JSONObject o = new JSONObject()
-            String key = r.getString("repo_key")
-            o.put("repoId", r.getInt("repo_id"))
-            o.put("repoKey", key)
-            o.put("name", r.getString("name"))
-            o.put("description", r.getString("description"))
-            o.put("visibility", r.getString("visibility"))
-            o.put("headRevision", r.getInt("head_revision"))
-            o.put("createdTs", r.getLong("created_ts"))
-            o.put("checkoutUrl", (base ? base : "") + "/" + key)
-            rows.put(o)
-        }
+        for (Record r : repos)
+            rows.put(repoJson(r, base))
         outjson.put("repos", rows)
+    }
+
+    /** Repo summary JSON shared by searchRepos and getProfile.  ownerHandle is the repo_key prefix. */
+    private static JSONObject repoJson(Record r, String base) {
+        JSONObject o = new JSONObject()
+        String key = r.getString("repo_key")
+        o.put("repoId", r.getInt("repo_id"))
+        o.put("repoKey", key)
+        o.put("ownerHandle", key != null && key.contains("/") ? key.substring(0, key.indexOf("/")) : null)
+        o.put("name", r.getString("name"))
+        o.put("description", r.getString("description"))
+        o.put("visibility", r.getString("visibility"))
+        o.put("headRevision", r.getInt("head_revision"))
+        o.put("createdTs", r.getLong("created_ts"))
+        o.put("checkoutUrl", (base ? base : "") + "/" + key)
+        return o
     }
 
     private static String baseUrl() {

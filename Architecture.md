@@ -138,7 +138,7 @@ is enforced by the framework; the current user is `servlet.getUserData().getUser
 | `Register` | Public self-registration (the only no-auth method; allow-listed in `KissInit.groovy`). Validates email + handle, creates a regular user. |
 | `Users` | Admin-only account management (list/add/update/delete), including handle, admin flag, and SVN password; regenerates svnserve passwd. |
 | `RepositoryService` | Create repos (SVNKit) under the owner's handle namespace; list owned/granted (`getRepositories`); keyword Explore (`searchRepositories`); update; admin disk `scanRepositories`. |
-| `DiscoverService` | GitHub-style discovery: `searchUsers` (people directory — handle/name/public-repo-count, no emails) and `getProfile` (a user's public repos; private ones too if the viewer is the owner or an admin). |
+| `DiscoverService` | GitHub-style discovery: `searchUsers` (people directory — handle/name/public-repo-count, no emails), `searchRepos` (public repos by name/description/key), and `getProfile` (a user's public repos; private ones too if the viewer is the owner or an admin). All searches are case-insensitive substring matches. |
 | `RepositoryAccessService` | Per-repo grant/revoke + set SVN password; rewrites `authz`/`passwd` on every change. |
 | `BrowseService` | Read-only `listDir` / `cat` / `readme` via SVNKit. |
 | `HistoryService` | `log` / `revisionDetail` (changed paths + diff) / `diff`. |
