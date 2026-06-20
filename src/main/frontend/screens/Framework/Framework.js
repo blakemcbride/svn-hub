@@ -12,6 +12,11 @@
         Utils.loadPage('screens/Repositories/Repositories', screenArea);
     });
 
+    $$('discover').onclick(function () {
+        Utils.cleanup();
+        Utils.loadPage('screens/Discover/Discover', screenArea);
+    });
+
     $$('insights').onclick(function () {
         Utils.cleanup();
         Utils.loadPage('screens/Insights/Insights', screenArea);

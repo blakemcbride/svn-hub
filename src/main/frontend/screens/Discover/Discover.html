@@ -1,0 +1,24 @@
+<div>
+    <style>
+        .disc-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .disc-section { font-weight: 600; margin: 18px 0 6px; }
+        .disc-hint { color: #57606a; font-size: 12px; }
+        .disc-bottom-pad { height: 40px; }
+    </style>
+
+    <h2 style="margin-top: 0;">Discover</h2>
+    <div class="disc-hint">Find people and browse their public repositories.</div>
+
+    <div class="disc-controls" style="margin-top: 10px;">
+        <text-input id="disc-search" placeholder="search by username or name" style="width: 300px;"></text-input>
+        <push-button id="disc-search-go">Search</push-button>
+    </div>
+
+    <div id="people-grid" style="width: 100%; height: 240px;"></div>
+
+    <div class="disc-section"><text-label id="disc-profile-title">Select a person to view their repositories</text-label></div>
+    <div class="disc-hint"><text-label id="disc-profile-sub"></text-label></div>
+    <div id="profile-repos-grid" style="width: 100%; height: 280px; margin-top: 6px;"></div>
+
+    <div class="disc-bottom-pad"></div>
+</div>

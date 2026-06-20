@@ -137,7 +137,8 @@ is enforced by the framework; the current user is `servlet.getUserData().getUser
 |---|---|
 | `Register` | Public self-registration (the only no-auth method; allow-listed in `KissInit.groovy`). Validates email + handle, creates a regular user. |
 | `Users` | Admin-only account management (list/add/update/delete), including handle, admin flag, and SVN password; regenerates svnserve passwd. |
-| `RepositoryService` | Create repos (SVNKit) under the owner's handle namespace; list owned/granted (`getRepositories`); **discover others' repos** (`searchRepositories`); update; admin disk `scanRepositories`. |
+| `RepositoryService` | Create repos (SVNKit) under the owner's handle namespace; list owned/granted (`getRepositories`); keyword Explore (`searchRepositories`); update; admin disk `scanRepositories`. |
+| `DiscoverService` | GitHub-style discovery: `searchUsers` (people directory — handle/name/public-repo-count, no emails) and `getProfile` (a user's public repos; private ones too if the viewer is the owner or an admin). |
 | `RepositoryAccessService` | Per-repo grant/revoke + set SVN password; rewrites `authz`/`passwd` on every change. |
 | `BrowseService` | Read-only `listDir` / `cat` / `readme` via SVNKit. |
 | `HistoryService` | `log` / `revisionDetail` (changed paths + diff) / `diff`. |
@@ -216,8 +217,9 @@ Exists*.
 
 - Entry pages: `index.html` (SPA shell), `login.html`, `register.html`, `why.html`.
 - After login, `screens/Framework/` is the nav shell. SvnHub screens:
-  `Repositories` (My / Explore + create + access), `Repository` (browse + README + commits + diffs),
-  `Insights` (stats), `Issues`, `MergeRequests`, `Users` (admin-only, hidden for regulars).
+  `Repositories` (My / Explore + create + access), `Discover` (people directory → a user's public
+  repos), `Repository` (browse + README + commits + diffs), `Insights` (stats), `Issues`,
+  `MergeRequests`, `Users` (admin-only, hidden for regulars).
 - **DOM rule:** application screens never touch the DOM directly; rich HTML (markdown/code/diffs) is
   injected via the component API `text-label.setHTMLValue(...)`. Charts are currently rendered as
   HTML/CSS rather than Chart.js canvases for the same reason.
@@ -263,8 +265,10 @@ here (the file is gitignored). **Gotcha:** empty values must be quoted (`Key = "
   (acknowledged O(repo-size) cost); record fork ancestry in the DB.
 - **User deletion vs owned repos** — `repository.owner_id` FK currently blocks deleting a user who
   owns repos; a proper delete (reassign or cascade `rm -rf` + auth regen) is not yet built.
-- **Discovery / search** — `searchRepositories` (Explore) exists; richer GitHub-style discovery
-  (per-user profile pages, dedicated search UI) is a candidate enhancement.
+- **Discovery / search** — keyword Explore (`searchRepositories`) and a Discover screen
+  (people directory + per-user public profiles, via `DiscoverService`) exist. Possible further
+  work: reachable profile links from repo lists, sort/activity filters, consolidating Explore
+  and Discover.
 - **Charts** — Chart.js is bundled but Insights uses HTML/CSS; canvas charts need a DOM-access exception.
 - **Anonymous public access**, full-text code search, releases/tags downloads, wikis, notifications — not built.
 ```
