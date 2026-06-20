@@ -3,6 +3,8 @@
         .disc-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
         .disc-section { font-weight: 600; margin: 18px 0 6px; }
         .disc-hint { color: #57606a; font-size: 12px; }
+        .disc-pager { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+        .disc-pager .disc-hint { margin: 0; }
         .disc-bottom-pad { height: 40px; }
     </style>
 
@@ -16,10 +18,20 @@
 
     <div class="disc-section">People</div>
     <div id="people-grid" style="width: 100%; height: 190px;"></div>
+    <div class="disc-pager">
+        <push-button id="people-prev">&larr; Prev</push-button>
+        <push-button id="people-next">Next &rarr;</push-button>
+        <span class="disc-hint"><text-label id="people-count"></text-label></span>
+    </div>
 
     <div class="disc-section"><text-label id="disc-repos-title">Projects</text-label></div>
     <div class="disc-hint"><text-label id="disc-repos-sub"></text-label></div>
     <div id="repos-grid" style="width: 100%; height: 280px; margin-top: 6px;"></div>
+    <div class="disc-pager">
+        <push-button id="repos-prev">&larr; Prev</push-button>
+        <push-button id="repos-next">Next &rarr;</push-button>
+        <span class="disc-hint"><text-label id="repos-count"></text-label></span>
+    </div>
 
     <div class="disc-bottom-pad"></div>
 </div>
