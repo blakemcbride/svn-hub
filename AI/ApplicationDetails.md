@@ -33,7 +33,16 @@ framework reference — read it before changing framework code.
   item is hidden for regular users. For a self-registered user the **email address is the
   username** (login identifier); registration captures a single password used for both web
   login (PBKDF2 hash) and `svn` checkouts (clear text in svnserve's passwd). (The admin
-  Users screen can still set username and email independently, e.g. for the bootstrap admin.)
+  Users screen can still set the login id and email independently, e.g. for the bootstrap admin.)
+- **Handle (username) & per-user namespace:** every user also has a URL-safe **`handle`**
+  (`users.handle`, unique) chosen at registration — the public "username". Repositories are
+  **namespaced under the owner's handle**: `repository.repo_key` is `"<handle>/<name>"`, on
+  disk `<SvnReposRoot>/<handle>/<name>`, served at `svn://host/<handle>/<name>` (svnserve
+  resolves nested repos by walking up the path). So two different users can each create a
+  repo named `utils`. Because `repo_key` stays globally unique, `fs_path = root + "/" +
+  repo_key`, the checkout URL, and the svnserve-log → repo mapping all work unchanged; only
+  `createRepository`/`scanRepositories` (build/scan the two-segment key) and display differ.
+  svnserve auth usernames remain the login id (email) — the auth subsystem is unchanged.
 - **Ownership & visibility:** each `repository` has an `owner_id` (creator) and a
   `visibility` of `public` or `private`. "My Repositories" (`getRepositories`) shows repos
   the user owns or is granted; **Explore** (`searchRepositories`) finds *other* repos they

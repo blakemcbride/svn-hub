@@ -89,10 +89,8 @@ class RepositoryService {
     /** Create a new FSFS repository and provision its svnserve auth. */
     void createRepository(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
         Integer userId = currentUser(servlet)
-        String repoKey = injson.getString("repoKey", "")
-        if (repoKey != null)
-            repoKey = repoKey.trim()
-        String name = injson.getString("name", "")
+        // The form's "Repository Name" is the name within the caller's namespace.
+        String name = injson.getString("repoKey", "")
         if (name != null)
             name = name.trim()
         String description = injson.getString("description", "")
@@ -101,13 +99,17 @@ class RepositoryService {
         if (visibility != "public" && visibility != "private")
             visibility = "private"
 
-        if (!repoKey || !(repoKey ==~ /[A-Za-z0-9_-]{1,100}/))
+        if (!name || !(name ==~ /[A-Za-z0-9_-]{1,100}/))
             throw new UserException("Invalid repository name. Use 1-100 letters, digits, dash or underscore (no spaces).")
-        if (!name)
-            name = repoKey
-        if (db.exists("select 1 from repository where repo_key = ?", repoKey))
-            throw new UserException("A repository named '" + repoKey + "' already exists.")
 
+        // Namespace the repo under the owner's handle: repo_key = "<handle>/<name>".
+        String handle = userHandle(db, userId)
+        String repoKey = handle + "/" + name
+        if (db.exists("select 1 from repository where repo_key = ?", repoKey))
+            throw new UserException("You already have a repository named '" + name + "'.")
+
+        // Ensure the owner's namespace directory exists, then create the repo under it.
+        new File(reposRoot() + "/" + handle).mkdirs()
         String fsPath = reposRoot() + "/" + repoKey
         if (new File(fsPath).exists())
             throw new UserException("A directory already exists at " + fsPath)
@@ -192,37 +194,49 @@ class RepositoryService {
         Integer userId = currentUser(servlet)
         if (!RepoAccess.isAdmin(db, userId))
             throw new UserException("Only an administrator may scan for repositories.")
+        // Repos live two levels deep: <root>/<handle>/<name>.
         File root = new File(reposRoot())
         int added = 0
-        File[] children = root.listFiles()
-        if (children != null) {
-            for (File dir : children) {
-                if (!dir.isDirectory())
+        File[] handleDirs = root.listFiles()
+        if (handleDirs != null) {
+            for (File hdir : handleDirs) {
+                if (!hdir.isDirectory())
                     continue
-                // An FSFS repo has a 'format' file and a 'db' subdirectory.
-                if (!(new File(dir, "format").isFile() && new File(dir, "db").isDirectory()))
+                String handle = hdir.getName()
+                Record owner = db.fetchOne("select user_id from users where handle = ?", handle)
+                File[] repoDirs = hdir.listFiles()
+                if (repoDirs == null)
                     continue
-                String key = dir.getName()
-                if (db.exists("select 1 from repository where repo_key = ?", key))
-                    continue
-                long now = System.currentTimeMillis()
-                long head = 0
-                try {
-                    head = SvnRepo.getLatestRevision(dir.getAbsolutePath())
-                } catch (ignored) {
+                for (File dir : repoDirs) {
+                    if (!dir.isDirectory())
+                        continue
+                    // An FSFS repo has a 'format' file and a 'db' subdirectory.
+                    if (!(new File(dir, "format").isFile() && new File(dir, "db").isDirectory()))
+                        continue
+                    String key = handle + "/" + dir.getName()
+                    if (db.exists("select 1 from repository where repo_key = ?", key))
+                        continue
+                    long now = System.currentTimeMillis()
+                    long head = 0
+                    try {
+                        head = SvnRepo.getLatestRevision(dir.getAbsolutePath())
+                    } catch (ignored) {
+                    }
+                    Record rec = db.newRecord("repository")
+                    rec.set("repo_key", key)
+                    rec.set("name", dir.getName())
+                    rec.set("fs_path", dir.getAbsolutePath())
+                    if (owner != null)
+                        rec.set("owner_id", owner.getInt("user_id"))
+                    rec.set("default_branch", "trunk")
+                    rec.set("discovered", "Y")
+                    rec.set("is_active", "Y")
+                    rec.set("created_ts", now)
+                    rec.set("head_revision", (int) head)
+                    rec.set("head_revision_ts", now)
+                    rec.addRecord()
+                    added++
                 }
-                Record rec = db.newRecord("repository")
-                rec.set("repo_key", key)
-                rec.set("name", key)
-                rec.set("fs_path", dir.getAbsolutePath())
-                rec.set("default_branch", "trunk")
-                rec.set("discovered", "Y")
-                rec.set("is_active", "Y")
-                rec.set("created_ts", now)
-                rec.set("head_revision", (int) head)
-                rec.set("head_revision_ts", now)
-                rec.addRecord()
-                added++
             }
         }
         outjson.put("added", added)
@@ -232,6 +246,14 @@ class RepositoryService {
 
     private static Integer currentUser(ProcessServlet servlet) {
         return (Integer) servlet.getUserData().getUserId()
+    }
+
+    /** The caller's URL-safe handle (the repo namespace). */
+    private static String userHandle(Connection db, Integer userId) {
+        Record u = db.fetchOne("select handle from users where user_id = ?", userId)
+        if (u == null || !u.getString("handle"))
+            throw new UserException("Your account has no username set, so a repository cannot be created.")
+        return u.getString("handle")
     }
 
     private static String reposRoot() {
@@ -259,8 +281,11 @@ class RepositoryService {
 
     private static JSONObject repoRow(Record r, Integer userId, String base) {
         JSONObject o = new JSONObject()
+        String key = r.getString("repo_key")
         o.put("repoId", r.getInt("repo_id"))
-        o.put("repoKey", r.getString("repo_key"))
+        o.put("repoKey", key)
+        // repo_key is "<handle>/<name>"; surface the owner handle for display.
+        o.put("ownerHandle", key != null && key.contains("/") ? key.substring(0, key.indexOf("/")) : null)
         o.put("name", r.getString("name"))
         o.put("description", r.getString("description"))
         o.put("visibility", r.getString("visibility"))

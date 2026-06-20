@@ -12,17 +12,16 @@
     let accSelected = null;
 
     const repoCols = [
+        {headerName: 'Owner', field: 'ownerDisplay', width: 150},
         {headerName: 'Name', field: 'name', flex: 2},
-        {headerName: 'Key', field: 'repoKey', flex: 1},
         {headerName: 'Visibility', field: 'visibility', width: 110},
-        {headerName: 'Owner', field: 'ownerLabel', width: 90},
         {headerName: 'HEAD', field: 'headRevision', width: 80}
     ];
     const repoGrid = new AGGrid('repo-grid', repoCols, 'repoId');
     repoGrid.show();
 
     function toRow(r) {
-        return Object.assign({}, r, {ownerLabel: r.owned ? 'you' : ''});
+        return Object.assign({}, r, {ownerDisplay: (r.ownerHandle || '') + (r.owned ? ' (you)' : '')});
     }
 
     async function loadMine() {

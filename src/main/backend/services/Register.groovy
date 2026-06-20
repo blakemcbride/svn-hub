@@ -28,19 +28,27 @@ class Register {
         String email = injson.getString("email", "")
         if (email != null)
             email = email.trim().toLowerCase()
+        String handle = injson.getString("handle", "")
+        if (handle != null)
+            handle = handle.trim().toLowerCase()
         String password = injson.getString("password", "")
         String fullName = injson.getString("fullName", "")
 
-        // The email address is also the username (the login identifier).
+        // The email is the login identifier; the handle is the URL-safe namespace name.
         if (!email || !(email ==~ /[^@\s]+@[^@\s]+\.[^@\s]+/))
             throw new UserException("Please enter a valid email address.")
+        if (!handle || !(handle ==~ /[a-z0-9][a-z0-9_-]{0,63}/))
+            throw new UserException("Invalid username. Use 1-64 characters (letters, digits, dash or underscore), starting with a letter or digit.")
         if (!password || password.length() < 6)
             throw new UserException("Password must be at least 6 characters.")
         if (db.exists("select 1 from users where lower(user_name) = ?", email))
             throw new UserException("An account with that email already exists.")
+        if (db.exists("select 1 from users where lower(handle) = ?", handle))
+            throw new UserException("That username is already taken.")
 
         Record rec = db.newRecord("users")
         rec.set("user_name", email)
+        rec.set("handle", handle)
         rec.set("user_password", PasswordHash.hash(password))
         rec.set("svn_password", password)        // same credential, for svn client auth
         rec.set("full_name", fullName)

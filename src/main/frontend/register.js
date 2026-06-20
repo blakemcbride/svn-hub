@@ -8,20 +8,23 @@
     async function doRegister() {
         if ($$('email').isError('Email'))
             return;
+        if ($$('handle').isError('Username'))
+            return;
         if ($$('password').isError('Password'))
             return;
         if ($$('password2').isError('Confirm'))
             return;
         const email = $$('email').getValue().trim().toLowerCase();
+        const handle = $$('handle').getValue().trim().toLowerCase();
         const password = $$('password').getValue();
         if (password !== $$('password2').getValue()) {
             Utils.showMessage('Error', 'The passwords do not match.');
             return;
         }
 
-        // The email is the username.
         const res = await Server.call('services/Register', 'register', {
             email: email,
+            handle: handle,
             password: password,
             fullName: $$('full-name').getValue()
         });

@@ -8,6 +8,7 @@
     const WS = 'services/Users';
 
     const columnDefs = [
+        {headerName: 'Username', field: 'handle', width: 140},
         {headerName: 'Full Name', field: 'fullName', flex: 2},
         {headerName: 'Email', field: 'email', flex: 2},
         {headerName: 'Admin', field: 'isAdmin', width: 90},
@@ -41,6 +42,7 @@
         return {
             id: id,
             userName: $$('users-user-name').getValue(),
+            handle: $$('users-handle').getValue(),
             fullName: $$('users-full-name').getValue(),
             email: $$('users-email').getValue(),
             userPassword: $$('users-password').getValue(),
@@ -53,6 +55,7 @@
     $$('users-new').onclick(() => {
         $$('users-popup-title').setValue('Add User');
         $$('users-user-name').clear();
+        $$('users-handle').clear();
         $$('users-full-name').clear();
         $$('users-email').clear();
         $$('users-password').clear();
@@ -62,7 +65,9 @@
         Utils.popup_open('users-edit-popup', 'users-user-name');
 
         $$('users-ok').onclick(async () => {
-            if ($$('users-user-name').isError('User Name'))
+            if ($$('users-user-name').isError('Login ID'))
+                return;
+            if ($$('users-handle').isError('Username'))
                 return;
             if ($$('users-password').isError('Login Password'))
                 return;
@@ -79,6 +84,7 @@
         const row = grid.getSelectedRow();
         $$('users-popup-title').setValue('Edit User');
         $$('users-user-name').setValue(row.userName);
+        $$('users-handle').setValue(row.handle);
         $$('users-full-name').setValue(row.fullName);
         $$('users-email').setValue(row.email);
         // Passwords are never sent to the client; leave blank to keep existing.
@@ -89,7 +95,9 @@
         Utils.popup_open('users-edit-popup', 'users-user-name');
 
         $$('users-ok').onclick(async () => {
-            if ($$('users-user-name').isError('User Name'))
+            if ($$('users-user-name').isError('Login ID'))
+                return;
+            if ($$('users-handle').isError('Username'))
                 return;
             const res = await Server.call(WS, 'updateRecord', gather(row.id));
             if (res._Success) {

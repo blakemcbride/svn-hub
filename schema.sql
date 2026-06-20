@@ -16,7 +16,8 @@
 -- ----------------------------------------------------------------------------
 CREATE TABLE users (
     user_id        serial                 NOT NULL PRIMARY KEY,
-    user_name      character varying(255) NOT NULL UNIQUE,   -- for self-registered users this equals their email
+    user_name      character varying(255) NOT NULL UNIQUE,   -- login identifier; for self-registered users this equals their email
+    handle         character varying(64)  NOT NULL UNIQUE,   -- URL-safe namespace name; repos live under svn://host/<handle>/<name>
     user_password  character varying(255) NOT NULL,           -- PBKDF2 login hash (org.kissweb.PasswordHash)
     svn_password   character varying(255),                    -- SvnHub-managed SVN password (written to svnserve passwd)
     full_name      character varying(200),
@@ -30,15 +31,15 @@ CREATE TABLE users (
 
 -- Default administrator.  user_password is the PBKDF2 hash of 'Password#123'
 -- (see org.kissweb.PasswordHash).  Login name: admin   (change this in production).
-INSERT INTO users (user_name, user_password, full_name, is_admin, user_active)
-VALUES ('admin', 'pbkdf2$600000$81rEONHNxJ5PaC7KKM7VOw$SeZvjzTF4G0nqkxmaVgnh1fkmf4961/WsNSLhPlVAps', 'Administrator', 'Y', 'Y');
+INSERT INTO users (user_name, handle, user_password, full_name, is_admin, user_active)
+VALUES ('admin', 'admin', 'pbkdf2$600000$81rEONHNxJ5PaC7KKM7VOw$SeZvjzTF4G0nqkxmaVgnh1fkmf4961/WsNSLhPlVAps', 'Administrator', 'Y', 'Y');
 
 -- ----------------------------------------------------------------------------
 -- repository
 -- ----------------------------------------------------------------------------
 CREATE TABLE repository (
     repo_id          serial                 NOT NULL PRIMARY KEY,
-    repo_key         character varying(100) NOT NULL UNIQUE,   -- first path segment, e.g. 'acme'
+    repo_key         character varying(200) NOT NULL UNIQUE,   -- namespace path "<handle>/<name>", e.g. 'alice/acme'
     name             character varying(200) NOT NULL,
     fs_path          character varying(500) NOT NULL,          -- absolute path of the FSFS repo on disk
     description      character varying(2000),

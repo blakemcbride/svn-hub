@@ -24,13 +24,14 @@ class Users {
             return
         }
         requireAdmin(db, servlet)
-        List<Record> recs = db.fetchAll("""select user_id, user_name, full_name, email, is_admin,
-                user_active, svn_password from users order by user_name""")
+        List<Record> recs = db.fetchAll("""select user_id, user_name, handle, full_name, email, is_admin,
+                user_active, svn_password from users order by handle""")
         JSONArray rows = new JSONArray()
         for (Record rec : recs) {
             JSONObject row = new JSONObject()
             row.put("id", rec.getInt("user_id"))
             row.put("userName", rec.getString("user_name"))
+            row.put("handle", rec.getString("handle"))
             row.put("fullName", rec.getString("full_name"))
             row.put("email", rec.getString("email"))
             row.put("isAdmin", rec.getString("is_admin"))
@@ -45,6 +46,7 @@ class Users {
         requireAdmin(db, servlet)
         Record rec = db.newRecord("users")
         rec.set("user_name", injson.getString("userName"))
+        rec.set("handle", normalizeHandle(db, injson.getString("handle", ""), null))
         rec.set("user_password", PasswordHash.hash(injson.getString("userPassword")))
         rec.set("full_name", injson.getString("fullName", ""))
         rec.set("email", injson.getString("email", ""))
@@ -64,6 +66,7 @@ class Users {
         requireAdmin(db, servlet)
         Record rec = db.fetchOne("select * from users where user_id = ?", injson.getInt("id"))
         rec.set("user_name", injson.getString("userName"))
+        rec.set("handle", normalizeHandle(db, injson.getString("handle", ""), injson.getInt("id")))
         rec.set("full_name", injson.getString("fullName", ""))
         rec.set("email", injson.getString("email", ""))
         rec.set("is_admin", "Y".equals(injson.getString("isAdmin", "N")) ? "Y" : "N")
@@ -91,6 +94,19 @@ class Users {
         Integer userId = (Integer) servlet.getUserData().getUserId()
         if (!RepoAccess.isAdmin(db, userId))
             throw new UserException("Administrator access is required to manage users.")
+    }
+
+    /** Validate + normalize a handle; ensure it is unique (excluding the given user when editing). */
+    private static String normalizeHandle(Connection db, String raw, Integer excludeUserId) {
+        String h = raw == null ? "" : raw.trim().toLowerCase()
+        if (!h || !(h ==~ /[a-z0-9][a-z0-9_-]{0,63}/))
+            throw new UserException("Invalid username. Use 1-64 characters (letters, digits, dash or underscore), starting with a letter or digit.")
+        Record dup = (excludeUserId == null)
+            ? db.fetchOne("select user_id from users where lower(handle) = ?", h)
+            : db.fetchOne("select user_id from users where lower(handle) = ? and user_id <> ?", h, excludeUserId)
+        if (dup != null)
+            throw new UserException("That username is already taken.")
+        return h
     }
 
     private static void regeneratePasswd(Connection db) {
