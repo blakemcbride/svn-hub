@@ -76,8 +76,8 @@
         const repoId = parseInt($$('ins-repo').getValue(), 10);
         if (!repoId)
             return;
-        const beginDay = $$('ins-begin').getValue();
-        const endDay = $$('ins-end').getValue();
+        const beginDay = $$('ins-begin').getIntValue();
+        const endDay = $$('ins-end').getIntValue();
         $$('ins-range-label').setValue('(' + fmtDay(beginDay) + ' – ' + fmtDay(endDay) + ')');
 
         const res = await Server.call(WS_STATS, 'insights', {repoId: repoId, beginDay: beginDay, endDay: endDay});
