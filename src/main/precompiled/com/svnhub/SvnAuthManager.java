@@ -82,6 +82,6 @@ public final class SvnAuthManager {
         // authz-db is relative to the repo's conf dir; password-db is the shared absolute path.
         SvnAuth.writeFile(confDir + "/authz", SvnAuth.buildAuthz(perms, publicRead));
         SvnAuth.writeFile(confDir + "/svnserve.conf",
-                SvnAuth.buildSvnserveConf(sharedPasswdPath, "authz", REALM));
+                SvnAuth.buildSvnserveConf(sharedPasswdPath, "authz", REALM, publicRead));
     }
 }

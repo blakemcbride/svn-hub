@@ -223,17 +223,17 @@ a new password — runs only with a valid session.
 - **Admin** (`is_admin='Y'`) — manage all user accounts, see/fully-access **every** repo (including
   others' private), scan disk. `RepoAccess.isAdmin` short-circuits all access checks to true.
 
-**Visibility:** `private` (default) vs `public`. Public repos are readable by any authenticated
-user; this is enforced **twice** — `RepoAccess.canRead` returns true for public (web side), and the
-repo's svnserve `authz` gets a `* = r` catch-all (svn side). Write always requires an explicit grant.
+**Visibility:** `private` (default) vs `public`. A **public** repo allows **anonymous checkout** — no
+username or password — enforced on the svn side by `anon-access = read` in its `conf/svnserve.conf`
+plus a `* = r` catch-all in `conf/authz`; on the web side `RepoAccess.canRead` returns true for public.
+A **private** repo uses `anon-access = none` + a deny-all (`* =`) catch-all, so only granted users can
+read. Write always requires authentication (`auth-access = write`) and an explicit `rw` grant.
 
 **svnserve auth is generated, not hand-edited:** SvnHub is the system of record. On any access/
 password/visibility change, `SvnAuthManager` rewrites a shared `passwd` (from `users.svn_password`)
-and each repo's `conf/authz` + `conf/svnserve.conf` (from `repository_access`). svnserve auth
-usernames are the login email; the handle is only the URL namespace.
-
-> **Note (anonymous):** "public" currently means *any logged-in user* can checkout — svnserve runs
-> `anon-access = none`. True no-account anonymous checkout is not enabled.
+and each repo's `conf/authz` + `conf/svnserve.conf` (from `repository_access` + visibility). svnserve
+auth usernames are the login email; the handle is only the URL namespace. (Existing repos are brought
+up to the current auth format by the `RegenerateRepoAuthUpgrader` per-row migration — see `AutoUpdate.md`.)
 
 ---
 
@@ -321,5 +321,6 @@ and NPEs Kiss's `Hashtable`-backed environment at startup.
   work: reachable profile links from repo lists, sort/activity filters, consolidating Explore
   and Discover.
 - **Charts** — Chart.js is bundled but Insights uses HTML/CSS; canvas charts need a DOM-access exception.
-- **Anonymous public access**, full-text code search, releases/tags downloads, wikis, notifications — not built.
+- Full-text code search, releases/tags downloads, wikis, notifications — not built.
+  (Anonymous checkout of public repos **is** supported — `anon-access = read`.)
 ```

@@ -57,7 +57,7 @@ logged and counted).
   `MigrationRegistry.CURRENT_DB_VERSION` (currently **4**).
 - **`record_version`** — integer column on each `repository` row. Owner:
   `RecordMigrator`. Expected = `RecordUpgraderRegistry.CURRENT_RECORD_VERSION`
-  (currently **2**).
+  (currently **3**).
 
 v1 is the `schema.sql` baseline (never a Migration object); registered
 migrations start at v2.
@@ -114,7 +114,8 @@ from data the row already has — never overwrite/transform/delete), **idempoten
 
 Current chain:
 ```
-v1 -> v2   DefaultBranchUpgrader   (set default_branch='trunk' where NULL and the repo has /trunk)
+v1 -> v2   DefaultBranchUpgrader      (set default_branch='trunk' where NULL and the repo has /trunk)
+v2 -> v3   RegenerateRepoAuthUpgrader  (rewrite each repo's svnserve auth so public repos allow anonymous checkout)
 ```
 
 ---
@@ -186,6 +187,7 @@ src/main/precompiled/com/svnhub/migrate/
     RecordUpgraderRegistry.java    # ordered list + CURRENT_RECORD_VERSION + validate()
     RecordMigrator.java            # stage 2: per-row walker
     DefaultBranchUpgrader.java     # v1 -> v2 backfill
+    RegenerateRepoAuthUpgrader.java # v2 -> v3 regenerate svnserve auth (anon checkout for public)
 src/main/backend/KissInit.groovy   # init2 drives both stages (fail-closed)
 src/main/backend/Login.groovy      # refuses login when schema not ready
 src/test/core/com/svnhub/migrate/RegistryTest.java

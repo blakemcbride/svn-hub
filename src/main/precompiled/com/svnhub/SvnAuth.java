@@ -79,12 +79,18 @@ public final class SvnAuth {
      * @param authzPath  path to this repo's authz file (relative to conf dir, or absolute)
      * @param realm      authentication realm (a shared realm lets a client cache
      *                   one credential across all SvnHub repos)
+     * @param publicRead when true, anonymous (unauthenticated) read/checkout is
+     *                   allowed ({@code anon-access = read}); otherwise anonymous
+     *                   access is denied ({@code anon-access = none}).  Writing
+     *                   always requires authentication ({@code auth-access = write}).
      */
-    public static String buildSvnserveConf(String passwdPath, String authzPath, String realm) {
+    public static String buildSvnserveConf(String passwdPath, String authzPath, String realm, boolean publicRead) {
         StringBuilder sb = new StringBuilder();
         sb.append("# Managed by SvnHub - do not edit by hand.\n");
         sb.append("[general]\n");
-        sb.append("anon-access = none\n");
+        // Public repositories permit anonymous checkout (no username/password);
+        // private repositories require authentication.  Writes always require auth.
+        sb.append("anon-access = ").append(publicRead ? "read" : "none").append('\n');
         sb.append("auth-access = write\n");
         sb.append("password-db = ").append(passwdPath).append('\n');
         sb.append("authz-db = ").append(authzPath).append('\n');

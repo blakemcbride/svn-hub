@@ -13,13 +13,14 @@ import java.util.List;
 public final class RecordUpgraderRegistry {
 
     /** The record_version the current code expects on each repository row. */
-    public static final int CURRENT_RECORD_VERSION = 2;
+    public static final int CURRENT_RECORD_VERSION = 3;
 
     private static final List<RecordUpgrader> UPGRADERS;
 
     static {
         List<RecordUpgrader> u = new ArrayList<>();
-        u.add(new DefaultBranchUpgrader());   // v1 -> v2
+        u.add(new DefaultBranchUpgrader());        // v1 -> v2
+        u.add(new RegenerateRepoAuthUpgrader());   // v2 -> v3
         UPGRADERS = Collections.unmodifiableList(u);
     }
 
