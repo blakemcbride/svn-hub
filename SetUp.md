@@ -133,7 +133,7 @@ is present in `/etc/postgresql/*/main/pg_hba.conf`, then
 ## 4. Get the code
 
 ```bash
-sudo -u svnhub git clone <YOUR-REPO-URL> /opt/svnhub
+sudo -u svnhub git clone https://github.com/blakemcbride/svn-hub /opt/svnhub
 sudo chown -R svnhub:svnhub /opt/svnhub
 ```
 
