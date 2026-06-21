@@ -26,14 +26,11 @@ class RepositoryService {
     void getRepositories(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
         Integer userId = currentUser(servlet)
         boolean admin = RepoAccess.isAdmin(db, userId)
-        List<Record> recs
-        if (admin)
-            recs = db.fetchAll("select * from repository where is_active = 'Y' order by name")
-        else
-            recs = db.fetchAll("""select r.* from repository r
-                    join repository_access ra on ra.repo_id = r.repo_id
-                    where r.is_active = 'Y' and ra.user_id = ? and ra.can_read = 'Y'
-                    order by r.name""", userId)
+        // "My Repositories" shows only the repos the caller OWNS — not repos merely
+        // granted to them, and not (for admins) everyone's.  Other repositories are
+        // found via Explore / Discover.
+        List<Record> recs = db.fetchAll(
+                "select * from repository where is_active = 'Y' and owner_id = ? order by name", userId)
         String base = baseUrl()
         JSONArray rows = new JSONArray()
         for (Record r : recs)
