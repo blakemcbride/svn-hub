@@ -348,6 +348,44 @@ public class Tasks {
         copyRegex("src/main/core/org/kissweb/lisp", explodedDir + "/WEB-INF/classes/org/kissweb/lisp", ".*\\.lisp", null, false);
         copy("src/main/core/log4j2.xml", explodedDir + "/WEB-INF/classes");
         copyForce("src/main/core/WEB-INF/web-unsafe.xml", explodedDir + "/WEB-INF/web.xml");
+        stampIndexHtml();
+    }
+
+    /**
+     * Stamp cache-control metadata into the DEPLOYED index.html (under
+     * {@code work/exploded}) so every build busts the browser cache.  Replaces the
+     * placeholders shipped in the source file:
+     * <ul>
+     *   <li>{@code softwareVersion} &rarr; a fresh UUID (unique per build; used as
+     *       the {@code ?ver=} cache-busting key on every loaded script)</li>
+     *   <li>{@code releaseDate} &rarr; the build date/time</li>
+     *   <li>{@code controlCache} &rarr; {@code true} (enable cache busting)</li>
+     * </ul>
+     * Only the deployed copy is stamped; the source {@code src/main/frontend/index.html}
+     * keeps {@code controlCache = false} so the {@code develop} server (which serves
+     * the source tree live) still reflects front-end edits without a rebuild.
+     */
+    private static void stampIndexHtml() {
+        final String indexFile = explodedDir + "/index.html";
+        if (!exists(indexFile))
+            return;
+        try {
+            String html = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(indexFile)),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            final String version = java.util.UUID.randomUUID().toString();
+            final String date = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
+            html = html.replace("SystemInfo.softwareVersion = \"EDIT-1\";",
+                    "SystemInfo.softwareVersion = \"" + version + "\";");
+            html = html.replace("SystemInfo.releaseDate = \"EDIT-2\";",
+                    "SystemInfo.releaseDate = \"" + date + "\";");
+            html = html.replace("SystemInfo.controlCache = false;",
+                    "SystemInfo.controlCache = true;");
+            rm(indexFile);
+            writeToFile(indexFile, html);
+            printlnIfVerbose("stamped index.html (version=" + version + ", releaseDate=" + date + ")");
+        } catch (Exception e) {
+            throw new RuntimeException("stampIndexHtml: error stamping " + indexFile + ": " + e.getMessage());
+        }
     }
 
     /**
