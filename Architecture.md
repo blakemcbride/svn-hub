@@ -160,6 +160,15 @@ don't depend on cross-Groovy-service static calls.
 - `SvnLogParser` — parses the svnserve `--log-file` line format (unit-tested: `src/test/core/com/svnhub/SvnLogParserTest.java`).
 - `Json` — converts Java collections (from SVNKit) → Kiss JSON.
 
+### Auto-update at startup (`src/main/precompiled/com/svnhub/migrate/`)
+`KissInit.init2` runs a two-stage migration so a deploy is just a WAR swap +
+restart — the server brings the DB current with the code. Stage 1 `SchemaMigrator`
+applies ordered, additive, idempotent schema `Migration`s tracked by a `db_version`
+table; Stage 2 `RecordMigrator` applies per-row `RecordUpgrader`s tracked by
+`repository.record_version`. A schema-migration failure (or a DB ahead of the
+code) marks `SchemaStatus` not-ready, and `Login.login` then refuses logins
+(fail-closed). Full detail: `AutoUpdate.md`.
+
 ### Cron tasks (`src/main/backend/CronTasks/`, `crontab`)
 - `IngestSvnLogs` — **every minute**: incremental, idempotent tail of the svnserve log →
   `access_event` + rollups + `working_copy_state`; auto-provisions discovered repos/aliases.

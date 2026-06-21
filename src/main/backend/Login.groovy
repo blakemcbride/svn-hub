@@ -5,6 +5,7 @@ import org.kissweb.restServer.ProcessServlet
 import org.kissweb.restServer.UserCache
 import org.kissweb.restServer.UserData
 import org.kissweb.PasswordHash
+import com.svnhub.migrate.SchemaStatus
 
 /**
  * This module handles user authentication.  Passwords are stored as salted PBKDF2 hashes
@@ -36,6 +37,11 @@ class Login {
      * @return
      */
     public static UserData login(Connection db, String user, String password, JSONObject outjson, ProcessServlet servlet) {
+        // Fail-closed: never serve on a half-migrated database (see AutoUpdate.md).
+        // The framework reports the generic "Invalid login." for a null return; the
+        // real reason (schema migration incomplete) is in the startup log banner.
+        if (!SchemaStatus.isReady())
+            return null
         Record rec = db.fetchOne("select user_id, user_password, is_admin from users where user_name = ? and user_active = 'Y'", user)
         if (rec == null)
             return null    //  invalid user

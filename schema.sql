@@ -51,6 +51,7 @@ CREATE TABLE repository (
     created_ts       bigint                 NOT NULL,
     head_revision    integer,                                  -- cached youngest revision
     head_revision_ts bigint,                                   -- commit ts of HEAD
+    record_version   integer                NOT NULL DEFAULT 1,  -- per-row auto-update version (RecordMigrator)
     CONSTRAINT repository_disc_chk   CHECK (discovered = 'Y' OR discovered = 'N'),
     CONSTRAINT repository_active_chk CHECK (is_active  = 'Y' OR is_active  = 'N'),
     CONSTRAINT repository_vis_chk    CHECK (visibility IN ('public','private'))

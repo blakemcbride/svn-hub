@@ -3,6 +3,9 @@ import org.kissweb.restServer.MainServlet
 import org.kissweb.restServer.UserCache
 import org.kissweb.restServer.UserData
 import java.util.function.Consumer
+import com.svnhub.migrate.SchemaMigrator
+import com.svnhub.migrate.RecordMigrator
+import com.svnhub.migrate.SchemaStatus
 
 class KissInit {
 
@@ -34,8 +37,27 @@ class KissInit {
 
     /**
      * Code to run once the database is open but before the app is running.
+     *
+     * Auto-update (see AutoUpdate.md): bring the database current with the
+     * deployed code.  Stage 1 (schema) runs first because it may create the
+     * columns Stage 2 (per-row) reads.  A schema-migration failure marks the
+     * schema not-ready, which blocks logins (fail-closed); the per-row stage
+     * runs only when the schema is ready and never blocks startup itself.
      */
     static void init2(Connection db) {
-        // If you use db, make sure you commit.
+        SchemaStatus.reset()
+        try {
+            SchemaMigrator.runOnStartup()
+            SchemaStatus.markReady()
+        } catch (Throwable t) {
+            SchemaStatus.fail(t.getMessage())
+            println "* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *"
+            println "* * * SCHEMA MIGRATION FAILED — logins are blocked until fixed"
+            println "* * * " + t.getMessage()
+            println "* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *"
+            t.printStackTrace()
+        }
+        if (SchemaStatus.isReady())
+            RecordMigrator.runOnStartup()
     }
 }
