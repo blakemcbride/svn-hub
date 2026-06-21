@@ -370,8 +370,7 @@ public class Tasks {
         if (!exists(indexFile))
             return;
         try {
-            String html = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(indexFile)),
-                    java.nio.charset.StandardCharsets.UTF_8);
+            String html = readFileText(indexFile);
             final String version = java.util.UUID.randomUUID().toString();
             final String date = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
             html = html.replace("SystemInfo.softwareVersion = \"EDIT-1\";",
@@ -388,12 +387,80 @@ public class Tasks {
         }
     }
 
+    /** Read a whole text file (UTF-8) at build time. */
+    private static String readFileText(String path) throws java.io.IOException {
+        return new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)),
+                java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Read a single {@code key = value} from an ini file at build time.  Ignores
+     * blank lines, {@code #}/{@code ;} comments, and {@code [section]} headers;
+     * strips surrounding double quotes.  Returns null if the file or key is absent.
+     */
+    private static String readIniValue(String iniPath, String key) {
+        if (!exists(iniPath))
+            return null;
+        try {
+            for (String raw : readFileText(iniPath).split("\n")) {
+                String s = raw.trim();
+                if (s.isEmpty() || s.startsWith("#") || s.startsWith(";") || s.startsWith("["))
+                    continue;
+                int eq = s.indexOf('=');
+                if (eq < 0)
+                    continue;
+                if (!s.substring(0, eq).trim().equals(key))
+                    continue;
+                String v = s.substring(eq + 1).trim();
+                if (v.length() >= 2 && v.startsWith("\"") && v.endsWith("\""))
+                    v = v.substring(1, v.length() - 1);
+                return v.trim();
+            }
+        } catch (Exception e) {
+            // treat as unset
+        }
+        return null;
+    }
+
+    /**
+     * Stamp the production CORS allowed-origins into the deployed web.xml from the
+     * {@code AllowedOrigins} key in application.ini.  Called from {@link #war()},
+     * where web.xml is the secure variant whose Tomcat {@code CorsFilter} enforces
+     * an origin allow-list.  Set {@code AllowedOrigins} to the public URL(s) users
+     * load the site from (comma-separated), e.g. {@code https://svnhub.example.com}.
+     * When unset, the web-secure.xml default (localhost dev origins) is left in
+     * place — so production browsers would be refused (403) until it is configured.
+     */
+    private static void stampCorsOrigins() {
+        final String webXml = explodedDir + "/WEB-INF/web.xml";
+        if (!exists(webXml))
+            return;
+        final String origins = readIniValue("src/main/backend/application.ini", "AllowedOrigins");
+        if (origins == null || origins.isEmpty())
+            return;   // not configured -> leave the web-secure.xml localhost default
+        final String DEFAULT_ORIGINS = "http://localhost:8000,http://localhost:63342";
+        try {
+            String xml = readFileText(webXml);
+            if (!xml.contains(DEFAULT_ORIGINS)) {
+                printlnIfVerbose("stampCorsOrigins: origins marker not found in web.xml; skipping");
+                return;
+            }
+            xml = xml.replace(DEFAULT_ORIGINS, origins);
+            rm(webXml);
+            writeToFile(webXml, xml);
+            printlnIfVerbose("stamped CORS allowed origins: " + origins);
+        } catch (Exception e) {
+            throw new RuntimeException("stampCorsOrigins: error stamping " + webXml + ": " + e.getMessage());
+        }
+    }
+
     /**
      * Build the system and create the deployable WAR file.
      */
     public static void war() {
         buildSystem();
         copyForce("src/main/core/WEB-INF/web-secure.xml", explodedDir + "/WEB-INF/web.xml");
+        stampCorsOrigins();
         createJar(explodedDir, BUILDDIR + "/Kiss.war");
         copyForce("src/main/core/WEB-INF/web-unsafe.xml", explodedDir + "/WEB-INF/web.xml");
         //println("Kiss.war has been created in the " + BUILDDIR + " directory");

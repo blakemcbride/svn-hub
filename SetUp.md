@@ -194,12 +194,23 @@ MailFrom          = do_not_reply@svn-hub.com
 MailFromName      = Svn-Hub
 MailMessageStream = outbound
 MailEnabled       = true
+
+# --- Web / CORS ---
+# Public origin(s) the browser loads the site from (comma-separated, no trailing
+# slash). REQUIRED: the build stamps this into the production web.xml's CORS
+# allow-list. If unset, browsers get a 403 ("Error communicating with the server")
+# on every API call. Use your real domain here.
+AllowedOrigins    = https://svnhub.example.com
 ```
 
 > **Critical gotcha:** every key must have a value, and **empty values must be
 > quoted** as `Key = ""`. A bare `Key =` parses to `null` and crashes startup
 > (the database is then never configured). `SvnServicePassword = ""` above is
 > correct.
+
+> **CORS:** `AllowedOrigins` must match the URL in your browser's address bar
+> exactly (scheme + host, e.g. `https://svnhub.example.com`). The back-end keeps
+> CORS enforced — requests from any other origin are still rejected.
 
 Lock the file down (it contains secrets):
 
@@ -406,21 +417,34 @@ svn checkout svn://svnhub.example.com/<handle>/<repo> --username <email>
 
 ## 14. Maintenance
 
-**Upgrade to a new version** (the DB auto-migrates on start):
+**Upgrade to a new version** (the database auto-migrates on startup):
 
 ```bash
-sudo systemctl stop svnhub
+# 1. Back up first (see Backups below) — especially before a schema-version bump.
+
+# 2. Pull and rebuild (build as the svnhub user):
 cd /opt/svnhub
 sudo -u svnhub git pull
-sudo -u svnhub ./bld clean      # REQUIRED when the schema version changes (see note)
+sudo -u svnhub ./bld clean        # safe: removes only work/ (build artifacts); keeps tomcat/
 sudo -u svnhub ./bld -v build
+
+# 3. Restart, forcing Tomcat to re-explode the freshly built WAR:
+sudo systemctl stop svnhub
+sudo rm -rf /opt/svnhub/tomcat/webapps/ROOT /opt/svnhub/tomcat/work
 sudo systemctl start svnhub
 ```
 
-> **Why `clean` on upgrades:** the schema version is a compile-time constant that
-> `bld`'s incremental compile can leave stale, so the migrator may skip a new
-> migration. A clean build avoids this. Always take a database backup before an
-> upgrade that bumps the schema version. (Details in `AutoUpdate.md`.)
+> **Notes:**
+> - `./bld clean` removes only `work/` (it keeps the downloaded Tomcat), so it is
+>   safe to run on every upgrade — and it avoids a stale compile-time
+>   schema-version constant that could make the migrator skip a new migration
+>   (see `AutoUpdate.md`).
+> - Removing `tomcat/webapps/ROOT` + `tomcat/work` forces Tomcat to deploy the new
+>   WAR (and the freshly stamped `index.html`).
+> - **Clients need no action** — each build stamps a new cache-busting version into
+>   `index.html`, so browsers pick up the new front-end automatically.
+> - Take a **database backup before any upgrade that bumps the schema version** — it
+>   is your rollback.
 
 **Backups:**
 
