@@ -54,7 +54,7 @@ logged and counted).
 
 - **`db_version`** — integer for the whole database (`db_version` table, one row
   per applied migration). Owner: `SchemaMigrator`. Expected =
-  `MigrationRegistry.CURRENT_DB_VERSION` (currently **3**).
+  `MigrationRegistry.CURRENT_DB_VERSION` (currently **4**).
 - **`record_version`** — integer column on each `repository` row. Owner:
   `RecordMigrator`. Expected = `RecordUpgraderRegistry.CURRENT_RECORD_VERSION`
   (currently **2**).
@@ -86,8 +86,10 @@ edit a shipped migration; write a new one).
 
 Current chain:
 ```
-v2  Migration002AddRecordVersion   (adds the record_version column itself)
-v3  Migration003AddIndexes         (repository_owner_idx)
+v2  Migration002AddRecordVersion     (adds the record_version column itself)
+v3  Migration003AddIndexes           (repository_owner_idx)
+v4  Migration004AddEmailVerification (users.email_verified + verification_code table;
+                                      grandfathers existing accounts to verified)
 ```
 
 ---
@@ -124,6 +126,20 @@ v1 -> v2   DefaultBranchUpgrader   (set default_branch='trunk' where NULL and th
    implementing `Migration`; additive DDL with `IF NOT EXISTS` in `apply`.
 2. Register it in `MigrationRegistry` (in order) and bump `CURRENT_DB_VERSION`.
 3. Commit together. `./bld build` + restart (precompiled requires it).
+
+> **Constant-inlining gotcha (do a clean rebuild when you bump
+> `CURRENT_DB_VERSION`):** `CURRENT_DB_VERSION` is a `static final int`, i.e. a
+> compile-time constant that `javac` *inlines* into every class that reads it —
+> notably `SchemaMigrator` (its `target`). `bld`'s incremental compile only
+> recompiles changed `.java`, so after editing only `MigrationRegistry.java` the
+> stale `SchemaMigrator.class` still has the **old** target inlined → it sees
+> `target == current`, logs "schema current", and silently skips the new
+> migration. Fix: `./bld clean` then `./bld build` (then bootstrap-compile per
+> the note below if the clean build's test phase fails). Also force Tomcat to
+> re-explode the fresh WAR (`rm -rf tomcat/webapps/ROOT tomcat/work` before
+> start) — a stale exploded `ROOT/` newer than `ROOT.war` is not re-expanded.
+> (Migrator INFO logs are suppressed by the root log level, so the DB
+> `db_version` is the real proof a migration ran, not catalina.out.)
 
 ### A per-row backfill (new upgrader)
 1. Create a `RecordUpgrader` in the same package; `upgrade` fills new fields only
@@ -168,6 +184,7 @@ src/main/precompiled/com/svnhub/migrate/
     SchemaMigrator.java            # stage 1: schema walker
     Migration002AddRecordVersion.java
     Migration003AddIndexes.java
+    Migration004AddEmailVerification.java
     RecordUpgrader.java            # stage-2 interface + contract
     RecordUpgraderRegistry.java    # ordered list + CURRENT_RECORD_VERSION + validate()
     RecordMigrator.java            # stage 2: per-row walker

@@ -19,12 +19,20 @@
         if (res._Success) {
             Server.setUUID(res.uuid);
             Utils.saveData('isAdmin', res.isAdmin === true);
-            DOMUtils.preventNavigation(true, function() {
-                Utils.yesNo('Confirm', 'Are you sure you want to logout?', function() {
-                    Server.logout();
+            Utils.saveData('handle', res.handle);
+            Utils.saveData('email', res.email);
+            Utils.saveData('emailVerified', res.emailVerified === true);
+            if (res.emailVerified === true) {
+                DOMUtils.preventNavigation(true, function() {
+                    Utils.yesNo('Confirm', 'Are you sure you want to logout?', function() {
+                        Server.logout();
+                    });
                 });
-            });
-            Utils.loadPage('screens/Framework/Framework');
+                Utils.loadPage('screens/Framework/Framework');
+            } else {
+                // Gate the app until the email address is verified.
+                Utils.loadPage('verify');
+            }
         } else {
             $$('password').clear().focus();
         }
@@ -38,6 +46,10 @@
 
     $$('to-register').onclick(function () {
         Utils.loadPage('register');
+    });
+
+    $$('to-forgot').onclick(function () {
+        Utils.loadPage('forgot');
     });
 
     $$('username').onEnter(function () {

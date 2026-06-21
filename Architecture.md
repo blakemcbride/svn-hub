@@ -99,7 +99,11 @@ CHECK constraints.
 **Identity & repositories**
 - `users` — `user_name` (login id; for self-registered users = email, UNIQUE), `handle` (URL-safe
   public username / namespace, UNIQUE), `user_password` (PBKDF2 login hash), `svn_password` (clear,
-  for svnserve passwd), `full_name`, `email`, `is_admin`, `user_active`.
+  for svnserve passwd), `full_name`, `email`, `is_admin`, `user_active`, `email_verified` (`'Y'` once
+  the user confirms their email via a code).
+- `verification_code` — short-lived, single-use 6-digit codes for email verification and
+  password reset: `(user_id, purpose)` UNIQUE (`purpose` = `email_verify` | `password_reset`),
+  `code` (`char(6)`, zero-padded), `expires_ts`, `attempts`, `created_ts`.
 - `repository` — `repo_key` (`handle/name`, UNIQUE), `name`, `fs_path`, `owner_id`, `visibility`
   (`public`/`private`), `description`, `default_branch`, `discovered`, `is_active`, `head_revision`
   (+ts), `created_ts`.
@@ -135,7 +139,9 @@ is enforced by the framework; the current user is `servlet.getUserData().getUser
 
 | Service | Responsibility |
 |---|---|
-| `Register` | Public self-registration (the only no-auth method; allow-listed in `KissInit.groovy`). Validates email + handle, creates a regular user. |
+| `Register` | Public self-registration (no-auth; allow-listed in `KissInit.groovy`). Validates email + handle, creates an **unverified** regular user, and emails a 6-digit verification code (Postmark). |
+| `AccountService` | Authenticated self-service: `verifyEmail`/`resendVerification` (confirm the email with the emailed code), `changePassword` (verifies current, updates the PBKDF2 hash + `svn_password`, regenerates svnserve passwd), `status`. |
+| `PasswordResetService` | Forgotten-password flow (no-auth; allow-listed): `requestReset` (emails a code; never reveals whether the account exists) and `resetPassword` (validates the code, sets a new password). |
 | `Users` | Admin-only account management (list/add/update/delete), including handle, admin flag, and SVN password; regenerates svnserve passwd. |
 | `RepositoryService` | Create repos (SVNKit) under the owner's handle namespace; list owned/granted (`getRepositories`); keyword Explore (`searchRepositories`); update; admin disk `scanRepositories`. |
 | `DiscoverService` | GitHub-style discovery: `searchUsers` (people directory — handle/name/public-repo-count, no emails), `searchRepos` (public repos by name/description/key), and `getProfile` (a user's public repos; private ones too if the viewer is the owner or an admin). All searches are case-insensitive substring matches and paginated (`page`/`pageSize` in, `total` out). |
@@ -159,6 +165,13 @@ don't depend on cross-Groovy-service static calls.
 - `RepoAccess` — centralized `canRead/canWrite/canAdmin` + `isAdmin` (admin ⇒ full access; public ⇒ readable).
 - `SvnLogParser` — parses the svnserve `--log-file` line format (unit-tested: `src/test/core/com/svnhub/SvnLogParserTest.java`).
 - `Json` — converts Java collections (from SVNKit) → Kiss JSON.
+- `Mailer` — sends transactional email via Postmark's REST API (`RestClient` POST to
+  `https://api.postmarkapp.com/email`, `X-Postmark-Server-Token`); sending only. Config (token, from
+  address, stream, on/off) from `application.ini`.
+- `VerificationCodes` — issue/verify the 6-digit codes (`SecureRandom`, expiring, single-use,
+  attempt-limited). Failed-attempt increments commit on a **separate connection** so the limit
+  survives the request rollback that `UserException` triggers.
+- `EmailBodies` — HTML bodies for the verification and reset emails.
 
 ### Auto-update at startup (`src/main/precompiled/com/svnhub/migrate/`)
 `KissInit.init2` runs a two-stage migration so a deploy is just a WAR swap +
@@ -179,7 +192,18 @@ code) marks `SchemaStatus` not-ready, and `Login.login` then refuses logins
 ## 6. Authentication & authorization
 
 **Login:** email is the credential; password verified against the PBKDF2 hash (`org.kissweb.PasswordHash`).
-The session UUID is returned and sent on every subsequent JSON-RPC call. Login also returns `isAdmin`.
+The session UUID is returned and sent on every subsequent JSON-RPC call. Login also returns `isAdmin`,
+`handle`, `email`, and `emailVerified`.
+
+**Email verification (gate):** self-registered accounts start `email_verified='N'`. Registration emails
+a 6-digit code (`SecureRandom`) and logs the user straight in, but the frontend **gates** the app on the
+verify screen (enter code / resend / log out) until the email is confirmed — assuring the address is real
+and deliverable. Pre-existing accounts were grandfathered to verified by the v4 migration.
+
+**Passwords:** a logged-in user changes their own password from the top-bar account area
+(`AccountService.changePassword`); a forgotten password is reset, unauthenticated, via an emailed code
+(`PasswordResetService`, no account enumeration). Either path updates both the PBKDF2 login hash and the
+clear `svn_password`, then regenerates the svnserve `passwd`. Codes: 15-min TTL, 5 attempts, single-use.
 
 **Two user classes:**
 - **Regular** (default; all self-registered users) — full rights on repos they own or are granted,
@@ -224,8 +248,11 @@ Exists*.
 
 ## 8. Frontend (`src/main/frontend/`, never the `kiss/` subdir)
 
-- Entry pages: `index.html` (SPA shell), `login.html`, `register.html`, `why.html`.
-- After login, `screens/Framework/` is the nav shell. SvnHub screens:
+- Entry pages: `index.html` (SPA shell), `login.html` (with "Forgot password?"), `register.html`,
+  `why.html`, `verify.html` (email-verification gate, authenticated), `forgot.html` (password reset,
+  unauthenticated).
+- After login (and once verified), `screens/Framework/` is the nav shell — its top bar shows the
+  account handle + a **Change password** popup. SvnHub screens:
   `Repositories` (My / Explore + create + access), `Discover` (people directory → a user's public
   repos), `Repository` (browse + README + commits + diffs), `Insights` (stats), `Issues`,
   `MergeRequests`, `Users` (admin-only, hidden for regulars).
@@ -241,9 +268,11 @@ Exists*.
 
 Read via `MainServlet.getEnvironment(key)`. SvnHub keys: `SvnReposRoot`, `SvnConfDir`, `SvnLogFile`,
 `SvnLogRotateGlob`, `SvnLogPathPrefix`, `SvnLogMaxLinesPerRun`, `SvnServiceUser`/`SvnServicePassword`
-(merge identity), `SvnBaseUrl` (for checkout URLs), plus PostgreSQL connection. Secrets live only
-here (the file is gitignored). **Gotcha:** empty values must be quoted (`Key = ""`) — a bare
-`Key =` parses to null and NPEs Kiss's `Hashtable`-backed environment at startup.
+(merge identity), `SvnBaseUrl` (for checkout URLs); email/Postmark: `PostmarkApiToken`, `MailFrom`,
+`MailFromName`, `MailMessageStream`, `MailEnabled`; plus the PostgreSQL connection. Secrets live only
+here (the file is gitignored); **`application.template.ini`** (committed) documents every key with the
+secrets blank. **Gotcha:** empty values must be quoted (`Key = ""`) — a bare `Key =` parses to null
+and NPEs Kiss's `Hashtable`-backed environment at startup.
 
 ---
 

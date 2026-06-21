@@ -24,15 +24,35 @@ CREATE TABLE users (
     email          character varying(255),
     is_admin       character(1)           NOT NULL DEFAULT 'N',
     user_active    character(1)           NOT NULL DEFAULT 'Y',
+    email_verified character(1)           NOT NULL DEFAULT 'N',   -- 'Y' once the user confirms their email (verification code)
     created_ts     bigint,
-    CONSTRAINT users_active_chk CHECK (user_active = 'Y' OR user_active = 'N'),
-    CONSTRAINT users_admin_chk  CHECK (is_admin    = 'Y' OR is_admin    = 'N')
+    CONSTRAINT users_active_chk   CHECK (user_active    = 'Y' OR user_active    = 'N'),
+    CONSTRAINT users_admin_chk    CHECK (is_admin       = 'Y' OR is_admin       = 'N'),
+    CONSTRAINT users_verified_chk CHECK (email_verified = 'Y' OR email_verified = 'N')
 );
 
 -- Default administrator.  user_password is the PBKDF2 hash of 'Password#123'
 -- (see org.kissweb.PasswordHash).  Login name: admin   (change this in production).
-INSERT INTO users (user_name, handle, user_password, full_name, is_admin, user_active)
-VALUES ('admin', 'admin', 'pbkdf2$600000$81rEONHNxJ5PaC7KKM7VOw$SeZvjzTF4G0nqkxmaVgnh1fkmf4961/WsNSLhPlVAps', 'Administrator', 'Y', 'Y');
+INSERT INTO users (user_name, handle, user_password, full_name, is_admin, user_active, email_verified)
+VALUES ('admin', 'admin', 'pbkdf2$600000$81rEONHNxJ5PaC7KKM7VOw$SeZvjzTF4G0nqkxmaVgnh1fkmf4961/WsNSLhPlVAps', 'Administrator', 'Y', 'Y', 'Y');
+
+-- ----------------------------------------------------------------------------
+-- verification_code  (short-lived, single-use 6-digit codes)
+--   purpose 'email_verify'  -> confirm a registered email address
+--   purpose 'password_reset' -> authorize a forgotten-password reset
+-- Codes are zero-padded strings (may begin with 0), expire, and are attempt-
+-- limited; see com.svnhub.VerificationCodes.
+-- ----------------------------------------------------------------------------
+CREATE TABLE verification_code (
+    code_id     serial                 NOT NULL PRIMARY KEY,
+    user_id     integer                NOT NULL REFERENCES users(user_id),
+    purpose     character varying(20)  NOT NULL,    -- 'email_verify' | 'password_reset'
+    code        character(6)           NOT NULL,    -- zero-padded 6 digits
+    expires_ts  bigint                 NOT NULL,
+    attempts    integer                NOT NULL DEFAULT 0,
+    created_ts  bigint                 NOT NULL,
+    CONSTRAINT verification_code_uniq UNIQUE (user_id, purpose)
+);
 
 -- ----------------------------------------------------------------------------
 -- repository

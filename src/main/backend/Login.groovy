@@ -42,7 +42,7 @@ class Login {
         // real reason (schema migration incomplete) is in the startup log banner.
         if (!SchemaStatus.isReady())
             return null
-        Record rec = db.fetchOne("select user_id, user_password, is_admin from users where user_name = ? and user_active = 'Y'", user)
+        Record rec = db.fetchOne("select user_id, user_password, is_admin, handle, email, email_verified from users where user_name = ? and user_active = 'Y'", user)
         if (rec == null)
             return null    //  invalid user
         String pw = rec.getString("user_password")
@@ -53,6 +53,11 @@ class Login {
         UserData ud = UserCache.newUser(user, password, (Integer) rec.getInt("user_id"))
         // Let the front-end gate admin-only UI (the back-end still enforces it).
         outjson.put("isAdmin", "Y".equals(rec.getString("is_admin")))
+        // The front-end gates the app on an unverified email and shows the handle
+        // in the account area; the email drives the "we sent a code to ..." text.
+        outjson.put("emailVerified", "Y".equals(rec.getString("email_verified")))
+        outjson.put("handle", rec.getString("handle"))
+        outjson.put("email", rec.getString("email") ?: "")
         return ud
     }
 

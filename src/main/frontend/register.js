@@ -45,12 +45,20 @@
         if (login._Success) {
             Server.setUUID(login.uuid);
             Utils.saveData('isAdmin', login.isAdmin === true);
-            DOMUtils.preventNavigation(true, function () {
-                Utils.yesNo('Confirm', 'Are you sure you want to logout?', function () {
-                    Server.logout();
+            Utils.saveData('handle', login.handle);
+            Utils.saveData('email', login.email);
+            Utils.saveData('emailVerified', login.emailVerified === true);
+            // New accounts are unverified: send them to verify their email first.
+            if (login.emailVerified === true) {
+                DOMUtils.preventNavigation(true, function () {
+                    Utils.yesNo('Confirm', 'Are you sure you want to logout?', function () {
+                        Server.logout();
+                    });
                 });
-            });
-            Utils.loadPage('screens/Framework/Framework');
+                Utils.loadPage('screens/Framework/Framework');
+            } else {
+                Utils.loadPage('verify');
+            }
         } else {
             Utils.loadPage('login');
         }

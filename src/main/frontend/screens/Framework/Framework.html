@@ -8,12 +8,24 @@
             font-size: 22px;
             font-weight: 600;
             letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .svnhub-topbar .tag {
             font-size: 13px;
             font-weight: 400;
             color: #b8c0c8;
             margin-left: 14px;
+        }
+        .svnhub-account {
+            font-size: 13px;
+            font-weight: 400;
+            white-space: nowrap;
+        }
+        .svnhub-account #acct-name {
+            color: #b8c0c8;
+            margin-right: 12px;
         }
         .svnhub-body {
             display: flex;
@@ -36,7 +48,11 @@
     </style>
 
     <div class="svnhub-topbar">
-        Svn-Hub <span class="tag">Public Subversion hosting, with real checkout/update insight</span>
+        <span>Svn-Hub <span class="tag">Public Subversion hosting, with real checkout/update insight</span></span>
+        <span class="svnhub-account">
+            <text-label id="acct-name"></text-label>
+            <push-button id="change-pw">Change password</push-button>
+        </span>
     </div>
 
     <div class="svnhub-body">
@@ -56,5 +72,29 @@
             Select an item on the left.
         </div>
     </div>
+
+    <popup id="change-pw-popup" height="300px" width="430px">
+        <popup-title>Change Password</popup-title>
+        <popup-body>
+            <div style="padding: 8px 4px;">
+                <div style="margin-bottom:12px;">
+                    <div style="display:inline-block; width:150px; text-align:right; margin-right:10px;">Current password:</div>
+                    <text-input id="cpw-current" password required></text-input>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <div style="display:inline-block; width:150px; text-align:right; margin-right:10px;">New password:</div>
+                    <text-input id="cpw-new" password required></text-input>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <div style="display:inline-block; width:150px; text-align:right; margin-right:10px;">Confirm:</div>
+                    <text-input id="cpw-confirm" password required></text-input>
+                </div>
+                <div style="text-align:center; margin-top:18px;">
+                    <push-button id="cpw-ok">OK</push-button>
+                    <push-button id="cpw-cancel" style="margin-left:10px;">Cancel</push-button>
+                </div>
+            </div>
+        </popup-body>
+    </popup>
 
 </div>

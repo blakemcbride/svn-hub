@@ -15,14 +15,15 @@ import java.util.List;
 public final class MigrationRegistry {
 
     /** The db_version the current code expects. */
-    public static final int CURRENT_DB_VERSION = 3;
+    public static final int CURRENT_DB_VERSION = 4;
 
     private static final List<Migration> MIGRATIONS;
 
     static {
         List<Migration> m = new ArrayList<>();
-        m.add(new Migration002AddRecordVersion());   // v2
-        m.add(new Migration003AddIndexes());         // v3
+        m.add(new Migration002AddRecordVersion());      // v2
+        m.add(new Migration003AddIndexes());            // v3
+        m.add(new Migration004AddEmailVerification());  // v4
         MIGRATIONS = Collections.unmodifiableList(m);
     }
 

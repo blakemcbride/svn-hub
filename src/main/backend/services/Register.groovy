@@ -8,6 +8,9 @@ import org.kissweb.restServer.MainServlet
 import org.kissweb.PasswordHash
 import org.kissweb.UserException
 import com.svnhub.SvnAuthManager
+import com.svnhub.VerificationCodes
+import com.svnhub.Mailer
+import com.svnhub.EmailBodies
 
 /**
  * Public self-registration (GitHub-style).  This is the only service method that
@@ -55,6 +58,7 @@ class Register {
         rec.set("email", email)
         rec.set("is_admin", "N")
         rec.set("user_active", "Y")
+        rec.set("email_verified", "N")           // confirmed via the emailed 6-digit code
         rec.set("created_ts", System.currentTimeMillis())
         rec.addRecord()
 
@@ -62,6 +66,16 @@ class Register {
         String confDir = MainServlet.getEnvironment("SvnConfDir")
         if (confDir)
             SvnAuthManager.regeneratePasswd(db, confDir + "/passwd")
+
+        // Email a verification code.  A send failure must not fail registration —
+        // the account exists and the user can resend from the verify screen.
+        Integer userId = (Integer) db.fetchOne("select user_id from users where user_name = ?", email).getInt("user_id")
+        try {
+            String code = VerificationCodes.issue(db, userId, VerificationCodes.PURPOSE_EMAIL, VerificationCodes.DEFAULT_TTL_MINUTES)
+            Mailer.sendHtml(email, fullName, "Verify your Svn-Hub email", EmailBodies.verifyEmail(code))
+        } catch (Exception e) {
+            println "* * * Register: could not send verification email to " + email + ": " + e.getMessage()
+        }
 
         outjson.put("username", email)
     }

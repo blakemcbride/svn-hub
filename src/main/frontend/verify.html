@@ -1,0 +1,24 @@
+<div class="center">
+    <div style="display: inline-block; text-align: center; max-width: 460px;">
+        <h1>Svn-Hub</h1>
+        <div style="margin-bottom: 14px; color: #57606a;">Verify your email address</div>
+
+        <p style="color:#24292f; line-height:1.55; margin: 0 0 18px;">
+            We sent a 6-digit verification code to
+            <b><text-label id="verify-email"></text-label></b>.
+            Enter it below to activate your account.
+        </p>
+
+        <form onsubmit="return false;" autocomplete="off">
+            <div style="display:inline-block; width:60px; text-align:right; margin-right:10px;">Code:</div>
+            <text-input id="code" required maxlength="6" autocomplete="one-time-code"></text-input>
+            <br>
+            <push-button id="verify" style="margin-top:20px;">Verify</push-button>
+        </form>
+
+        <div style="margin-top:18px;">
+            <push-button id="resend">Resend code</push-button>
+            <push-button id="logout" style="margin-left:10px;">Log out</push-button>
+        </div>
+    </div>
+</div>
