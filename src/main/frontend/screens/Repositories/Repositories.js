@@ -96,7 +96,7 @@
         }
     });
 
-    // ---- scan disk (admin) ----
+    // ---- scan disk (admin only) ----
     $$('repo-scan').onclick(async () => {
         const res = await Server.call(WS_REPO, 'scanRepositories');
         if (res._Success) {
@@ -104,6 +104,9 @@
             await loadMine();
         }
     });
+    // Scanning the disk is an admin-only action; hide the button for everyone else.
+    if (!isAdmin)
+        $$('repo-scan').hide();
 
     // ---- access management ----
     const accCols = [
