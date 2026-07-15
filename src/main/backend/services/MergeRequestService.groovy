@@ -23,7 +23,7 @@ class MergeRequestService {
         RepoAccess.requireRead(db, userId, repoId)
         String status = injson.getString("status", "")
         String sql = """select m.number as "number", m.title as "title", m.status as "status",
-                m.source_path as "sourcePath", m.target_path as "targetPath",
+                m.source_path as "sourcePath", m.target_path as "targetPath", m.source_repo_id as "sourceRepoId",
                 m.created_ts as "createdTs", m.merged_rev as "mergedRev", u.user_name as "createdBy"
                 from merge_request m join users u on u.user_id = m.created_by where m.repo_id = ?"""
         JSONArray rows
@@ -51,6 +51,12 @@ class MergeRequestService {
         mr.put("status", m.getString("status"))
         mr.put("sourcePath", m.getString("source_path"))
         mr.put("targetPath", m.getString("target_path"))
+        Integer srcRepoId = m.getInt("source_repo_id")
+        mr.put("sourceRepoId", srcRepoId)
+        if (srcRepoId != null) {
+            Record sr = db.fetchOne("select repo_key from repository where repo_id = ?", srcRepoId)
+            mr.put("sourceRepoKey", sr?.getString("repo_key"))
+        }
         mr.put("mergedRev", m.getInt("merged_rev"))
         mr.put("createdBy", m.getString("created_by_name"))
         mr.put("createdTs", m.getLong("created_ts"))
@@ -65,11 +71,30 @@ class MergeRequestService {
         outjson.put("comments", comments)
     }
 
-    /** Create a merge request (branch -> target). */
+    /**
+     * Create a merge request: a branch -> target within one repo, or a
+     * fork -> origin across repos (when {@code sourceRepoId} names a fork of the
+     * target).  The request always lives in the target repo ({@code repoId}).
+     */
     void create(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
         Integer userId = uid(servlet)
-        int repoId = injson.getInt("repoId")
+        int repoId = injson.getInt("repoId")          // the TARGET repo — the MR lives here
         RepoAccess.requireRead(db, userId, repoId)
+
+        // Optional cross-repo source (a fork). Absent / equal to repoId == intra-repo.
+        Integer sourceRepoId = injson.has("sourceRepoId") ? injson.getInt("sourceRepoId") : repoId
+        boolean crossRepo = sourceRepoId != null && sourceRepoId != repoId
+        if (crossRepo) {
+            RepoAccess.requireRead(db, userId, sourceRepoId)
+            // v1: a cross-repo MR is only allowed from a direct fork back to its origin.
+            Record src = db.fetchOne("select fork_origin_id from repository where repo_id = ?", sourceRepoId)
+            if (src == null)
+                throw new UserException("Source repository not found.")
+            Integer forkOrigin = src.getInt("fork_origin_id")
+            if (forkOrigin == null || forkOrigin != repoId)
+                throw new UserException("A cross-repository merge request must come from a fork of this repository.")
+        }
+
         String source = injson.getString("sourcePath", "")
         String target = injson.getString("targetPath", "")
         String title = injson.getString("title", "")
@@ -81,24 +106,27 @@ class MergeRequestService {
             title = title.trim()
         if (!source || !target)
             throw new UserException("Source and target paths are required.")
-        if (source == target)
+        // Within one repo the paths must differ; across repos identical paths (fork trunk -> origin trunk) are normal.
+        if (!crossRepo && source == target)
             throw new UserException("Source and target must differ.")
         if (!title)
             title = "Merge " + source + " into " + target
 
         int number = db.fetchOne("select coalesce(max(number),0)+1 as n from merge_request where repo_id = ?", repoId).getInt("n")
-        String fsPath = RepoAccess.fsPath(db, repoId)
-        long head = SvnRepo.getLatestRevision(fsPath)
+        long targetHead = SvnRepo.getLatestRevision(RepoAccess.fsPath(db, repoId))
+        long sourceHead = SvnRepo.getLatestRevision(RepoAccess.fsPath(db, sourceRepoId))
         Record rec = db.newRecord("merge_request")
         rec.set("repo_id", repoId)
         rec.set("number", number)
+        if (crossRepo)
+            rec.set("source_repo_id", sourceRepoId)   // NULL for intra-repo requests
         rec.set("source_path", source)
         rec.set("target_path", target)
         rec.set("title", title)
         rec.set("body", injson.getString("body", ""))
         rec.set("status", "open")
-        rec.set("source_rev", (int) head)
-        rec.set("target_rev", (int) head)
+        rec.set("source_rev", (int) sourceHead)
+        rec.set("target_rev", (int) targetHead)
         rec.set("created_by", userId)
         rec.set("created_ts", System.currentTimeMillis())
         rec.addRecord()
@@ -111,12 +139,20 @@ class MergeRequestService {
         int repoId = injson.getInt("repoId")
         RepoAccess.requireRead(db, userId, repoId)
         int number = injson.getInt("number")
-        Record m = db.fetchOne("select source_path, target_path from merge_request where repo_id = ? and number = ?", repoId, number)
+        Record m = db.fetchOne("select source_path, target_path, source_repo_id from merge_request where repo_id = ? and number = ?", repoId, number)
         if (m == null)
             throw new UserException("Merge request not found.")
-        String fsPath = RepoAccess.fsPath(db, repoId)
-        // diff target..source : what source would bring into target
-        outjson.put("diff", SvnRepo.diffPaths(fsPath, m.getString("target_path"), -1L, m.getString("source_path"), -1L))
+        String targetFsPath = RepoAccess.fsPath(db, repoId)
+        Integer srcRepoId = m.getInt("source_repo_id")
+        if (srcRepoId == null || srcRepoId == repoId) {
+            // intra-repo: diff target..source (what source would bring into target)
+            outjson.put("diff", SvnRepo.diffPaths(targetFsPath, m.getString("target_path"), -1L, m.getString("source_path"), -1L))
+        } else {
+            // cross-repo (fork): the fork's own changes since the fork point (URL diff within the fork)
+            String srcFsPath = RepoAccess.fsPath(db, srcRepoId)
+            long baseRev = forkBaseRev(db, srcRepoId)
+            outjson.put("diff", SvnRepo.diffForeign(srcFsPath, m.getString("source_path"), baseRev))
+        }
     }
 
     /** Add a comment (optionally anchored to a file/line in the diff). */
@@ -155,14 +191,23 @@ class MergeRequestService {
             throw new UserException("Merge request not found.")
         if (m.getString("status") != "open")
             throw new UserException("This merge request is not open.")
-        String fsPath = RepoAccess.fsPath(db, repoId)
+        String targetFsPath = RepoAccess.fsPath(db, repoId)
         String author = db.fetchOne("select user_name from users where user_id = ?", userId).getString("user_name")
         String msg = injson.getString("message", "")
         if (!msg)
             msg = "Merge " + m.getString("source_path") + " into " + m.getString("target_path") +
                   " (merge request #" + number + ")"
 
-        long newRev = SvnRepo.merge(fsPath, m.getString("source_path"), m.getString("target_path"), msg, author)
+        Integer srcRepoId = m.getInt("source_repo_id")
+        long newRev
+        if (srcRepoId == null || srcRepoId == repoId) {
+            newRev = SvnRepo.merge(targetFsPath, m.getString("source_path"), m.getString("target_path"), msg, author)
+        } else {
+            // cross-repo (fork -> origin): foreign merge of the fork's divergent work
+            String srcFsPath = RepoAccess.fsPath(db, srcRepoId)
+            long baseRev = forkBaseRev(db, srcRepoId)
+            newRev = SvnRepo.mergeForeign(srcFsPath, m.getString("source_path"), baseRev, targetFsPath, m.getString("target_path"), msg, author)
+        }
 
         m.set("status", "merged")
         m.set("merged_ts", System.currentTimeMillis())
@@ -192,5 +237,12 @@ class MergeRequestService {
     private static Integer uid(ProcessServlet servlet) {
         def ud = servlet.getUserData()
         return ud == null ? null : (Integer) ud.getUserId()
+    }
+
+    /** The fork point (origin HEAD at fork time) for a forked repo; 0 if unrecorded. */
+    private static long forkBaseRev(Connection db, int forkRepoId) {
+        Record r = db.fetchOne("select fork_base_rev from repository where repo_id = ?", forkRepoId)
+        Integer b = r == null ? null : r.getInt("fork_base_rev")
+        return b == null ? 0L : (long) b
     }
 }

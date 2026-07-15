@@ -176,3 +176,5 @@ src/main/backend/application.ini
 /dev-repos/
 # Legacy demo database (SvnHub runs on PostgreSQL).
 src/main/backend/DB.sqlite
+# Local demo login credentials (plaintext passwords for seeded dev accounts).
+/DemoCredentials.txt

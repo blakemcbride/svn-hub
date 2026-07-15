@@ -31,8 +31,10 @@ import org.tmatesoft.svn.core.wc.SVNRevision;
 import org.tmatesoft.svn.core.wc.SVNRevisionRange;
 import org.tmatesoft.svn.core.wc.SVNUpdateClient;
 import org.tmatesoft.svn.core.wc.SVNWCUtil;
+import org.tmatesoft.svn.core.wc.admin.SVNAdminClient;
 import java.nio.file.Files;
 import java.util.Collections;
+import java.util.UUID;
 
 /**
  * Thin, app-neutral wrapper around SVNKit for SvnHub.
@@ -320,6 +322,97 @@ public final class SvnRepo {
             if (wc != null)
                 deleteTree(wc);
         }
+    }
+
+    // ---------------------------------------------------------------- forking
+
+    /**
+     * Copy an entire repository (full history) to a new location and give the
+     * copy a fresh repository UUID, so it is an independent ("foreign") repo.
+     *
+     * <p>Uses {@code svnadmin hotcopy}, which is cheaper than dump/load but makes
+     * a byte-exact copy — including the source UUID — so the UUID is reset
+     * afterward.  Without a distinct UUID, {@code svn} clients would confuse the
+     * copy with the original.</p>
+     *
+     * @return the fresh UUID assigned to the copy
+     */
+    public static String copyRepository(String srcFsPath, String dstFsPath) throws SVNException {
+        SVNClientManager cm = SVNClientManager.newInstance();
+        try {
+            SVNAdminClient admin = cm.getAdminClient();
+            admin.doHotCopy(new File(srcFsPath), new File(dstFsPath));
+            String newUuid = UUID.randomUUID().toString();
+            admin.doSetUUID(new File(dstFsPath), newUuid);
+            return newUuid;
+        } finally {
+            cm.dispose();
+        }
+    }
+
+    /**
+     * Foreign (cross-repository) merge: apply the divergent revisions of a fork's
+     * {@code sourcePath} onto another repository's {@code targetPath} and commit.
+     *
+     * <p>Only revisions after {@code baseRev} (the fork point — the origin HEAD at
+     * fork time) are the fork's own work, so the merge range is
+     * {@code (baseRev, sourceHead]}.  A foreign merge records no mergeinfo and
+     * ignores ancestry (the two repositories have different UUIDs); it applies the
+     * diff as plain changes, then commits.</p>
+     *
+     * @return the new revision number on the target, or -1 if the merge produced no change
+     */
+    public static long mergeForeign(String srcFsPath, String sourcePath, long baseRev,
+                                    String dstFsPath, String targetPath,
+                                    String message, String author) throws SVNException {
+        SVNClientManager cm = SVNClientManager.newInstance(SVNWCUtil.createDefaultOptions(true), author, null);
+        File wc = null;
+        try {
+            wc = Files.createTempDirectory("svnhub-fmerge-").toFile();
+            SVNURL targetUrl = childUrl(dstFsPath, targetPath);
+            SVNURL sourceUrl = childUrl(srcFsPath, sourcePath);
+            long sourceHead = open(srcFsPath).getLatestRevision();
+
+            SVNUpdateClient uc = cm.getUpdateClient();
+            uc.doCheckout(targetUrl, wc, SVNRevision.HEAD, SVNRevision.HEAD, SVNDepth.INFINITY, false);
+
+            SVNDiffClient dc = cm.getDiffClient();
+            SVNRevisionRange range = new SVNRevisionRange(SVNRevision.create(baseRev), SVNRevision.create(sourceHead));
+            // useAncestry=false: the source is a foreign repository, no shared ancestry to honor
+            dc.doMerge(sourceUrl, SVNRevision.create(sourceHead), Collections.singletonList(range),
+                    wc, SVNDepth.INFINITY, false, false, false, false);
+
+            SVNCommitClient cc = cm.getCommitClient();
+            SVNCommitInfo info = cc.doCommit(new File[] {wc}, false, message, null, null,
+                    false, false, SVNDepth.INFINITY);
+            return info == null ? -1 : info.getNewRevision();
+        } catch (SVNException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            cm.dispose();
+            if (wc != null)
+                deleteTree(wc);
+        }
+    }
+
+    /**
+     * Preview of a foreign merge: the unified diff a {@link #mergeForeign} would
+     * apply, i.e. the fork's own changes to {@code sourcePath} since the fork point.
+     *
+     * <p>Because a fork is a copy of its origin (see {@link #copyRepository}),
+     * revisions up to {@code baseRev} are identical in both repositories, so the
+     * fork's internal diff of {@code sourcePath} from {@code baseRev} to its HEAD
+     * is exactly the change set the merge introduces.  This is a URL-vs-URL diff
+     * <b>within the fork</b> — no working copy, no cross-repository comparison
+     * (which SVN forbids between different UUIDs), and no temp-file side effects.
+     * The apply-time 3-way merge ({@link #mergeForeign}) still resolves against the
+     * target's current state, so conflicts surface at merge time as usual.</p>
+     */
+    public static String diffForeign(String srcFsPath, String sourcePath, long baseRev) throws SVNException {
+        long sourceHead = open(srcFsPath).getLatestRevision();
+        return unifiedDiff(srcFsPath, sourcePath, baseRev, sourceHead);
     }
 
     // ----------------------------------------------------------------- helpers

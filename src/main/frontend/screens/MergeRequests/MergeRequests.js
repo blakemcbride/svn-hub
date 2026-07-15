@@ -17,6 +17,16 @@
     const mrSlide = document.getElementById('mr-slide');
     SvnHubUI.initPageSlide(mrSlide, 'list');
 
+    // If this repo is a fork, the composer offers "merge into upstream (origin)".
+    let forkInfo = null;
+    if (!guest) {
+        try {
+            const rr = await Server.call('services/RepositoryService', 'getRepository', {repoId: repoId});
+            if (rr._Success && rr.repo && rr.repo.forkOriginId)
+                forkInfo = {originId: rr.repo.forkOriginId, originKey: rr.repo.forkOriginKey || ('#' + rr.repo.forkOriginId)};
+        } catch (e) { /* non-fatal — composer just won't offer upstream */ }
+    }
+
     function fmtDate(ms) {
         try {
             return ms ? DateTimeUtils.formatDate(ms) : '';
@@ -163,6 +173,8 @@
         const mergedRev = r.mergedRev || r.mergedrev;
         const created = fmtDate(r.createdTs || r.createdts);
         const comments = Number(r.comments) || 0;
+        const fromFork = (r.sourceRepoId || r.sourcerepoid)
+            ? '<span class="mr-pill" style="color:var(--plum);background:var(--plum-soft);">fork</span>' : '';
         let meta = 'opened by ' + esc(createdBy || 'unknown') +
             (created ? ' &middot; ' + esc(created) : '');
         if (mergedRev)
@@ -174,6 +186,7 @@
                     '<span class="mr-num">#' + esc(r.number) + '</span>' +
                     '<span class="mr-title">' + esc(r.title || '(untitled)') + '</span>' +
                     '<span class="mr-pill ' + cls + '">' + esc(cls) + '</span>' +
+                    fromFork +
                 '</div>' +
                 '<div class="mr-path">' +
                     '<span class="seg src">' + esc(source || '?') + '</span>' +
@@ -237,6 +250,17 @@
         $$('mn-target').setValue('/trunk');
         $$('mn-title').clear();
         $$('mn-body').clear();
+        // Destination picker: only a fork can propose merging back into its origin.
+        const destField = document.getElementById('mn-dest-field');
+        if (forkInfo) {
+            $$('mn-dest').clear();
+            $$('mn-dest').add('', 'This repository (branch → target)');
+            $$('mn-dest').add(String(forkInfo.originId), 'Upstream — ' + forkInfo.originKey);
+            $$('mn-dest').setValue('');
+            destField.style.display = '';
+        } else {
+            destField.style.display = 'none';
+        }
         if (writeHistory)
             writeMrHistory('new');
         showView('compose');
@@ -248,14 +272,32 @@
     $$('mn-ok').onclick(async () => {
         if ($$('mn-source').isError('Source') || $$('mn-target').isError('Target'))
             return;
-        const res = await Server.call(WS, 'create', {
-            repoId: repoId,
+        const dest = forkInfo ? $$('mn-dest').getValue() : '';
+        const params = {
             sourcePath: $$('mn-source').getValue(),
             targetPath: $$('mn-target').getValue(),
             title: $$('mn-title').getValue(),
             body: $$('mn-body').getValue()
-        });
-        if (res._Success) {
+        };
+        if (dest) {
+            params.repoId = Number(dest);   // the MR lives in the upstream origin...
+            params.sourceRepoId = repoId;   // ...sourced from this fork
+        } else {
+            params.repoId = repoId;
+        }
+        const res = await Server.call(WS, 'create', params);
+        if (!res._Success)
+            return;
+        if (dest) {
+            Utils.toast.success('Merge request created in ' + forkInfo.originKey);
+            // The MR lives in the upstream repo — open it there at its Merge Requests section.
+            const key = forkInfo.originKey;
+            Utils.saveData('repoId', Number(forkInfo.originId));
+            Utils.saveData('repoKey', key);
+            Utils.saveData('repoName', key.indexOf('/') > -1 ? key.substring(key.indexOf('/') + 1) : key);
+            Utils.saveData('repoSection', 'mrs');
+            Router.go('/repository');
+        } else {
             Utils.toast.success('Merge request created');
             await showList('replace');
         }
@@ -277,8 +319,9 @@
             '<span>opened by <b>' + esc(m.createdBy) + '</b></span>' +
             '<span class="ticket-dotsep">&middot;</span><span>' + esc(fmtDate(m.createdTs)) + '</span>' +
             (m.mergedRev ? '<span class="ticket-dotsep">&middot;</span><span class="mono">merged as r' + esc(m.mergedRev) + '</span>' : '');
+        const srcRepoLabel = m.sourceRepoKey ? (esc(m.sourceRepoKey) + '&nbsp;:&nbsp;') : '';
         document.getElementById('md-path').innerHTML =
-            '<span class="seg src">' + esc(m.sourcePath) + '</span>' +
+            '<span class="seg src">' + srcRepoLabel + esc(m.sourcePath) + '</span>' +
             '<span class="arrow">&rarr;</span>' +
             '<span class="seg tgt">' + esc(m.targetPath) + '</span>';
         document.getElementById('md-desc').innerHTML =

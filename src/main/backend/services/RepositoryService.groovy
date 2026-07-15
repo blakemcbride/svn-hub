@@ -222,6 +222,12 @@ class RepositoryService {
             throw new UserException("Repository not found.")
         JSONObject repo = repoRow(r, userId, baseUrl())
         addCounts(repo, db, repoId)
+        // Surface the origin's key for a "forked from <owner>/<name>" badge.
+        Integer forkOriginId = r.getInt("fork_origin_id")
+        if (forkOriginId != null) {
+            Record origin = db.fetchOne("select repo_key from repository where repo_id = ?", forkOriginId)
+            repo.put("forkOriginKey", origin?.getString("repo_key"))
+        }
         outjson.put("repo", repo)
         outjson.put("access", accessJson(db, userId, repoId))
     }
@@ -287,6 +293,98 @@ class RepositoryService {
         acc.addRecord()
 
         // Regenerate svnserve auth so the new repo is immediately usable.
+        SvnAuthManager.regeneratePasswd(db, sharedPasswdPath())
+        SvnAuthManager.regenerateRepoAuth(db, repoId, sharedPasswdPath())
+
+        outjson.put("repoId", repoId)
+        outjson.put("repoKey", repoKey)
+    }
+
+    // ------------------------------------------------------------------- fork
+
+    /**
+     * Fork an existing repository into the caller's namespace: a full-history
+     * copy (with a fresh UUID) that the caller owns.  Visibility is inherited
+     * from the origin.  The fork is a point-in-time snapshot — later commits to
+     * the origin do NOT flow into it (SVN has no cheap fork; the copy is an
+     * independent repository).  {@code fork_base_rev} records the fork point so a
+     * later fork -> origin merge request merges only the fork's divergent work.
+     */
+    void forkRepository(JSONObject injson, JSONObject outjson, Connection db, ProcessServlet servlet) {
+        Integer userId = currentUser(servlet)
+        int originId = injson.getInt("repoId")
+        // You can only fork a repository you can read (public, or privately granted).
+        RepoAccess.requireRead(db, userId, originId)
+
+        Record origin = db.fetchOne("select * from repository where repo_id = ?", originId)
+        if (origin == null)
+            throw new UserException("Repository not found.")
+        if (origin.getString("is_active") != "Y")
+            throw new UserException("This repository is not active and cannot be forked.")
+        Integer originOwner = origin.getInt("owner_id")
+        if (originOwner != null && originOwner == userId)
+            throw new UserException("You cannot fork your own repository.")
+
+        // The URL-safe key segment for repo_key / disk path / checkout URL.  It
+        // defaults to the ORIGIN'S key segment (always URL-safe) — NOT the origin's
+        // display name, which may contain spaces.  The caller may override it.
+        String seg = injson.getString("name", "")
+        if (seg != null)
+            seg = seg.trim()
+        if (!seg) {
+            String originKey = origin.getString("repo_key")
+            seg = originKey != null && originKey.contains("/") ? originKey.substring(originKey.lastIndexOf("/") + 1) : originKey
+        }
+        if (!seg || !(seg ==~ /[A-Za-z0-9_-]{1,100}/))
+            throw new UserException("Invalid repository name. Use 1-100 letters, digits, dash or underscore (no spaces).")
+
+        String handle = userHandle(db, userId)
+        String repoKey = handle + "/" + seg
+        if (db.exists("select 1 from repository where repo_key = ?", repoKey))
+            throw new UserException("You already have a repository named '" + seg + "'.")
+
+        // Ensure the owner's namespace directory exists, then copy the repo under it.
+        new File(reposRoot() + "/" + handle).mkdirs()
+        String fsPath = reposRoot() + "/" + repoKey
+        if (new File(fsPath).exists())
+            throw new UserException("A directory already exists at " + fsPath)
+
+        String originFsPath = origin.getString("fs_path")
+        long baseRev = SvnRepo.getLatestRevision(originFsPath)   // fork point == origin HEAD now
+
+        // Full-history copy on disk with a fresh UUID (hotcopy + setuuid).
+        SvnRepo.copyRepository(originFsPath, fsPath)
+        long head = SvnRepo.getLatestRevision(fsPath)
+        long now = System.currentTimeMillis()
+
+        Record rec = db.newRecord("repository")
+        rec.set("repo_key", repoKey)
+        rec.set("name", origin.getString("name"))   // preserve the origin's display name
+        rec.set("fs_path", fsPath)
+        rec.set("description", origin.getString("description"))
+        rec.set("owner_id", userId)
+        rec.set("visibility", origin.getString("visibility"))   // inherited from origin
+        rec.set("default_branch", origin.getString("default_branch"))
+        rec.set("discovered", "N")
+        rec.set("is_active", "Y")
+        rec.set("created_ts", now)
+        rec.set("head_revision", (int) head)
+        rec.set("head_revision_ts", now)
+        rec.set("fork_origin_id", originId)
+        rec.set("fork_base_rev", (int) baseRev)
+        int repoId = ((Number) rec.addRecordAutoInc()).intValue()
+
+        // Forker gets full access to their fork.
+        Record acc = db.newRecord("repository_access")
+        acc.set("repo_id", repoId)
+        acc.set("user_id", userId)
+        acc.set("can_read", "Y")
+        acc.set("can_write", "Y")
+        acc.set("can_admin", "Y")
+        acc.set("granted_ts", now)
+        acc.addRecord()
+
+        // Regenerate svnserve auth so the fork is immediately usable.
         SvnAuthManager.regeneratePasswd(db, sharedPasswdPath())
         SvnAuthManager.regenerateRepoAuth(db, repoId, sharedPasswdPath())
 
@@ -374,6 +472,11 @@ class RepositoryService {
             db.execute("delete from access_daily_rollup where repo_id = ?", repoId)
             db.execute("update access_event set repo_id = null where repo_id = ?", repoId)
             db.execute("delete from repository_access where repo_id = ?", repoId)
+            // A fork of this repo survives deletion of its origin; just clear its provenance.
+            db.execute("update repository set fork_origin_id = null where fork_origin_id = ?", repoId)
+            // Outgoing fork merge requests (this repo as source, hosted in another repo) would dangle — remove them.
+            db.execute("delete from mr_comment where mr_id in (select mr_id from merge_request where source_repo_id = ?)", repoId)
+            db.execute("delete from merge_request where source_repo_id = ?", repoId)
             db.execute("delete from repository where repo_id = ?", repoId)
         } catch (Exception e) {
             if (movedRepoDir != null && movedRepoDir.exists() && activeRepoDir != null && !activeRepoDir.exists()) {
@@ -535,6 +638,9 @@ class RepositoryService {
         o.put("headRevisionTs", r.getLong("head_revision_ts"))
         o.put("createdTs", r.getLong("created_ts"))
         o.put("checkoutUrl", (base ? base : "") + "/" + r.getString("repo_key"))
+        Integer forkOriginId = r.getInt("fork_origin_id")
+        o.put("forkOriginId", forkOriginId)
+        o.put("isFork", forkOriginId != null)
         return o
     }
 

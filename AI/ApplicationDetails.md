@@ -79,15 +79,46 @@ framework reference — read it before changing framework code.
   can. Both are required. (Note: merges committed by SvnHub go over `file://` and so do
   *not* appear in the svnserve log.)
 
+## Repository forking (fork -> origin merge requests)
+- **A fork is a full-history copy, not a cheap pointer.** SVN has no Git-style fork, so
+  `RepositoryService.forkRepository` calls `SvnRepo.copyRepository` = `svnadmin hotcopy`
+  (cheaper than dump/load, but byte-exact so it duplicates the UUID) **+ `svnadmin setuuid`**
+  with a fresh UUID, making the fork an independent ("foreign") repository under the
+  forker's own handle namespace. Verified end-to-end via SVNKit 1.10.11 (`SVNAdminClient.doHotCopy` / `doSetUUID`).
+- **Snapshot semantics.** The fork is point-in-time; later commits to the origin do **not**
+  flow into it. `repository.fork_base_rev` records the origin HEAD at fork time (the fork
+  point); `repository.fork_origin_id` records provenance (nulled out, not cascaded, when the
+  origin is deleted — the fork survives). Visibility is **inherited** from the origin.
+- **Cross-repo merge requests.** `merge_request.source_repo_id` (NULL = intra-repo, the
+  original branch->trunk behavior) lets an MR draw its source from a fork. The MR lives in
+  the **target** (origin) repo (`repo_id`); creating one requires read on the target + read on
+  the source and that the source is a **direct fork of the target** (v1 constraint); approving
+  requires write on the target.
+- **Foreign merge = diff-apply, no mergeinfo.** `SvnRepo.mergeForeign` checks out the target
+  path into a throwaway WC and `doMerge`s the fork's divergent range `(fork_base_rev, sourceHead]`
+  with `useAncestry=false`, then commits. The diff **preview** (`SvnRepo.diffForeign`) is a
+  URL-vs-URL diff of `sourcePath` **within the fork** from `fork_base_rev` to its HEAD — since
+  the fork is a copy of the origin, revisions up to `fork_base_rev` are identical, so the fork's
+  own diff is exactly the change set the merge introduces. (Two `doDiff` approaches were rejected
+  in a spike: a two-URL diff cannot span different-UUID repos, `E170000`; and a working-copy
+  BASE-vs-WORKING diff leaks a `<name>.tmp` per file into the server's CWD — SVNKit resolves the
+  detranslate temp against the process CWD, which the JVM cannot relocate. The within-fork URL
+  diff has neither problem and needs no checkout/merge.)
+- **Limitations (v1):** cross-repo MRs are only fork->direct-origin (no fork-of-fork or
+  sibling-fork targets); no "sync/pull from upstream" (snapshot only); forks cost full disk
+  (no dedup). Frontend wiring (Fork button, "forked from" badge, MR source picker) is separate.
+
 ## Data model (`schema.sql`, PostgreSQL)
 Timestamps are `bigint` epoch-ms; day buckets are `integer` YYYYMMDD; flags are
 `char(1)` 'Y'/'N'.
 - Identity/repos: `users` (extended: full_name, email, is_admin, svn_password),
-  `repository`, `repository_access`, `svn_user_alias`.
+  `repository` (+ `fork_origin_id`, `fork_base_rev` — migration v5), `repository_access`,
+  `svn_user_alias`.
 - Statistics: `access_event` (firehose, SHA-256 `event_hash` unique for idempotency),
   `log_ingest_state` (per-inode cursor), `access_daily_rollup`, `working_copy_state`.
 - Browse cache: `commit_cache`, `commit_cache_path`.
-- Collaboration: `issue`, `issue_comment`, `merge_request`, `mr_comment`.
+- Collaboration: `issue`, `issue_comment`, `merge_request` (+ `source_repo_id` for
+  fork->origin MRs — migration v5), `mr_comment`.
 
 ## Backend (`src/main/backend/`)
 Precompiled helpers (`src/main/precompiled/com/svnhub/`, rebuild + restart on change):

@@ -114,6 +114,7 @@
     $$('repo-owner').setValue(ownerFromKey());
     $$('repo-title').setValue(repoName || repoKey);
     $$('repo-visibility').clear();
+    $$('repo-fork').hide();   // revealed after getRepository confirms a non-owner viewer
     document.getElementById('repo-checkout-display').textContent = '';
     $$('back').onclick(() => {
         SvnHubUI.goBack(repoReturnTo, fallbackReturnTo());
@@ -1223,6 +1224,28 @@
         setFact('fact-head', 'r' + (repo.headRevision || 0));
         setFact('fact-created', fmtDate(repo.createdTs));
         renderCrumb();
+
+        // "Forked from owner/name" provenance line (links back to the origin repo).
+        const forkNote = document.getElementById('repo-fork-note');
+        if (forkNote) {
+            if (repo.forkOriginId && repo.forkOriginKey) {
+                forkNote.innerHTML = 'Forked from <button type="button" class="repo-owner-link" id="repo-fork-origin-link">' +
+                    escapeHtml(repo.forkOriginKey) + '</button>';
+                forkNote.hidden = false;
+                const originLink = document.getElementById('repo-fork-origin-link');
+                if (originLink)
+                    originLink.addEventListener('click', () => {
+                        const key = repo.forkOriginKey;
+                        SvnHubUI.openRepo({
+                            repoId: repo.forkOriginId,
+                            repoKey: key,
+                            name: key.indexOf('/') > -1 ? key.substring(key.indexOf('/') + 1) : key
+                        }, personReturnTarget());
+                    });
+            } else {
+                forkNote.hidden = true;
+            }
+        }
     }
 
     // ---- manage repository (edit metadata / access) — repo admins only ----
@@ -1231,6 +1254,32 @@
     const repoSettingsMenu = document.getElementById('repo-settings-menu');
     if (repoSettingsMenu)
         repoSettingsMenu.hidden = !(canAdminRepo && currentRepo);
+
+    // ---- fork: any logged-in user who is not the owner may fork into their namespace ----
+    async function doForkRepo() {
+        Utils.yesNo('Fork repository',
+            'Create your own copy of ' + (repoName || repoKey) + ' under your account?', async () => {
+            const res = await Server.call(WS_REPO, 'forkRepository', {repoId: repoId});
+            if (!res._Success)
+                return;
+            Utils.toast.success('Forked to ' + res.repoKey);
+            const key = res.repoKey || '';
+            SvnHubUI.openRepo({
+                repoId: res.repoId,
+                repoKey: key,
+                name: key.indexOf('/') > -1 ? key.substring(key.indexOf('/') + 1) : key
+            }, personReturnTarget());
+        });
+    }
+    const forkBtn = $$('repo-fork');
+    if (forkBtn) {
+        if (!guest && currentRepo && !currentRepo.owned) {
+            forkBtn.onclick(doForkRepo);
+            forkBtn.show();
+        } else {
+            forkBtn.hide();
+        }
+    }
 
     const reErr = document.getElementById('re-name-err');
     function showEditRepoError(msg) {
