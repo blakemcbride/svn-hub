@@ -35,7 +35,7 @@ In this guide:
   - an `A` record for `svnhub.example.com` (the web UI), and
   - the same host is fine for `svn://` (port 3690).
 - **Cloud firewall / security group** allowing inbound **22** (SSH), **80**,
-  **443** (web), and **3690** (svn). Leave 8080 closed (Tomcat stays internal).
+  **443** (web), and **3690** (svn). Leave 8301 closed (Tomcat stays internal).
 - A **Postmark** account with a *server* created, its **Server API Token**, and
   the ability to add DNS records for the `MailFrom` domain (Step 11).
 
@@ -60,7 +60,7 @@ sudo ufw allow 3690/tcp        # svnserve
 sudo ufw --force enable
 ```
 
-> 8080 (Tomcat) is intentionally **not** opened — it is reached only through the
+> 8301 (Tomcat) is intentionally **not** opened — it is reached only through the
 > nginx reverse proxy on localhost (Step 10–11).
 
 ---
@@ -316,8 +316,8 @@ Confirm it started and migrated the database to the latest version:
 
 ```bash
 sleep 8
-# Backend should answer on localhost:8080
-curl -s -X POST http://localhost:8080/rest -H 'Content-Type: application/json' \
+# Backend should answer on localhost:8301
+curl -s -X POST http://localhost:8301/rest -H 'Content-Type: application/json' \
   -d '{"_class":"","_method":"Login","username":"admin","password":"Password#123"}'
 # -> {"_Success":true, ... "isAdmin":true ...}
 
@@ -333,7 +333,11 @@ Server log: `/opt/svnhub/tomcat/logs/catalina.out`.
 ## 11. Reverse proxy + HTTPS
 
 Tomcat serves both the static frontend and the `/rest` API at the same origin, so
-you only need to proxy one upstream. Create `/etc/nginx/sites-available/svnhub`:
+you only need to proxy one upstream. **The backend listens on port `8301`** — `bld`
+uses a port base of `8300` (frontend `8300`, backend `8300 + 1`), and every
+`./bld build` writes that connector into `tomcat/conf/server.xml`, so the port
+stays `8301` across rebuilds. Point nginx there (not `8080`). Create
+`/etc/nginx/sites-available/svnhub`:
 
 ```bash
 sudo tee /etc/nginx/sites-available/svnhub >/dev/null <<'NGINX'
@@ -344,7 +348,7 @@ server {
     client_max_body_size 200M;     # allow large file uploads via the web UI
 
     location / {
-        proxy_pass         http://127.0.0.1:8080;
+        proxy_pass         http://127.0.0.1:8301;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
@@ -465,7 +469,7 @@ sudo tar czf /var/backups/svnhub-repos-$(date +%F).tar.gz -C /srv svn
 - [ ] `application.ini` is mode `600`, owned by `svnhub`, and **never committed**.
 - [ ] Default `admin` password changed; consider disabling/renaming it.
 - [ ] `/srv/svn` is mode `700`, owned by `svnhub` (it holds cleartext SVN passwords).
-- [ ] Only 22/80/443/3690 are reachable; 8080 is internal only.
+- [ ] Only 22/80/443/3690 are reachable; 8301 is internal only.
 - [ ] HTTPS enforced (certbot installed the 80→443 redirect); cert auto-renews
       (`systemctl status certbot.timer`).
 - [ ] Postmark sender verified so reset/verification email actually delivers.
