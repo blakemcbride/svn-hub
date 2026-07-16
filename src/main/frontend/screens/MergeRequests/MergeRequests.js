@@ -16,6 +16,8 @@
     let current = null;
     const mrSlide = document.getElementById('mr-slide');
     SvnHubUI.initPageSlide(mrSlide, 'list');
+    if (SvnHubUI.bindHelpButtons)
+        SvnHubUI.bindHelpButtons(mrSlide);   // context-sensitive "?" help across list/compose/detail
 
     // If this repo is a fork, the composer offers "merge into upstream (origin)".
     let forkInfo = null;
@@ -373,7 +375,18 @@
         if (current !== number || !document.getElementById('md-diff'))
             return;                                   // user has moved on meanwhile
         if (dp._Success)
-            SvnHubUI.renderUnifiedDiff(diffHost, dp.diff);
+            SvnHubUI.renderUnifiedDiff(diffHost, dp.diff, {
+                comments: res.comments || [],
+                canComment: !guest,
+                formatDate: fmtDate,
+                renderMarkdown: md,
+                onChanged: () => openMr(number, {writeHistory: false}),
+                onAddComment: async (filePath, lineNo, body) => {
+                    const r = await Server.call(WS, 'comment',
+                        {repoId: repoId, number: number, body: body, filePath: filePath, lineNo: lineNo});
+                    return !!r._Success;
+                }
+            });
         else
             diffHost.innerHTML = '<p class="muted" style="margin:0; padding:10px 0;">Diff preview unavailable.</p>';
         SvnHubUI.refreshPageSlide(mrSlide);

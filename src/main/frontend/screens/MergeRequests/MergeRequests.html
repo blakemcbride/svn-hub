@@ -141,7 +141,8 @@
             <div class="page-title-block">
                 <div class="eyebrow">Merge requests</div>
                 <h1>Merge Requests - <text-label id="mr-repo"></text-label></h1>
-                <div class="lead">Review branch-to-target proposals and merge through SVNKit-backed service calls.</div>
+                <div class="lead">Review branch-to-target proposals and merge through SVNKit-backed service calls.
+                    <button type="button" class="help-q" data-help="mr-overview" aria-label="Help: what is a merge request">?</button></div>
             </div>
             <div class="toolbar">
                 <push-button id="mr-back">Repository</push-button>
@@ -164,7 +165,9 @@
         <div class="ticket-topbar">
             <push-button id="md-back" class="btn-sm">&larr; Merge requests</push-button>
             <div class="ticket-actions">
+                <button type="button" class="help-q" data-help="mr-close" aria-label="Help: closing a request">?</button>
                 <push-button id="md-closereq">Close request</push-button>
+                <button type="button" class="help-q" data-help="mr-merge" aria-label="Help: approve and merge">?</button>
                 <push-button id="md-merge" class="btn-accent">Approve &amp; Merge</push-button>
             </div>
         </div>
@@ -178,7 +181,8 @@
         </section>
         <section class="ticket-diff-block">
             <div class="ticket-thread-title">
-                <h3>Changes</h3>
+                <h3>Changes
+                    <button type="button" class="help-q" data-help="mr-review" aria-label="Help: reviewing and commenting">?</button></h3>
             </div>
             <div class="ticket-diff" id="md-diff"></div>
         </section>
@@ -210,21 +214,25 @@
                 </div>
             </div>
             <div class="field" id="mn-dest-field" style="display:none; margin-bottom:12px;">
-                <label for="mn-dest">Merge into</label>
+                <label for="mn-dest">Merge into
+                    <button type="button" class="help-q" data-help="mr-destination" aria-label="Help: merge into">?</button></label>
                 <drop-down id="mn-dest" style="width: 100%;"></drop-down>
             </div>
             <div class="ticket-compose-paths">
                 <div class="field">
-                    <label for="mn-source">Source path</label>
+                    <label for="mn-source">Source path
+                        <button type="button" class="help-q" data-help="mr-source" aria-label="Help: source path">?</button></label>
                     <text-input id="mn-source" style="width: 100%;" required>/branches/feature</text-input>
                 </div>
                 <div class="field">
-                    <label for="mn-target">Target path</label>
+                    <label for="mn-target">Target path
+                        <button type="button" class="help-q" data-help="mr-target" aria-label="Help: target path">?</button></label>
                     <text-input id="mn-target" style="width: 100%;" required>/trunk</text-input>
                 </div>
             </div>
             <div class="field" style="margin-top:12px;">
-                <label for="mn-revs">Commits to include (optional)</label>
+                <label for="mn-revs">Commits to include (optional)
+                    <button type="button" class="help-q" data-help="mr-commits" aria-label="Help: commits to include">?</button></label>
                 <text-input id="mn-revs" style="width: 100%;">all — or 5, 3-7, 3-7,10,12-15</text-input>
                 <div class="muted" style="margin-top:4px; font-size:12px;">
                     Blank or <b>all</b> merges every eligible commit. Otherwise list source revisions:

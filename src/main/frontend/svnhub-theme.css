@@ -4544,6 +4544,218 @@ input[type=button].admin-side-btn.active {
     font-weight: 700;
 }
 
+/* Inline (per-line) review comments injected into the diff table */
+.diff-comment-cell {
+    padding: 0 !important;
+    background: var(--paper-soft);
+    border-left: 3px solid var(--copper);
+}
+.diff-comment-row .diff-comment-cell {
+    padding: 4px 12px 6px 14px !important;
+}
+.dc-item {
+    padding: 8px 0;
+    border-top: 1px solid var(--rule);
+}
+.dc-item:first-child {
+    border-top: 0;
+}
+.dc-meta {
+    margin-bottom: 3px;
+    color: var(--ink-3);
+    font-size: 11.5px;
+    font-weight: 700;
+}
+.dc-body {
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.4;
+}
+.dc-body p {
+    margin: 0 0 6px;
+}
+.dc-body p:last-child {
+    margin-bottom: 0;
+}
+.dc-compose {
+    padding: 8px 12px 10px 14px;
+}
+.dc-compose-head {
+    margin-bottom: 6px;
+    color: var(--ink-3);
+    font-size: 12px;
+    font-weight: 700;
+}
+.dc-input {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    font: inherit;
+    font-size: 13px;
+    padding: 7px 9px;
+    border: 1px solid var(--rule-2);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--paper);
+    color: var(--ink);
+}
+.dc-compose-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 7px;
+}
+.dc-add, .dc-cancel {
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 700;
+    padding: 5px 13px;
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+}
+.dc-add {
+    color: #fff;
+    background: var(--copper);
+    border: 1px solid var(--copper);
+}
+.dc-add:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.dc-cancel {
+    color: var(--ink-2);
+    background: transparent;
+    border: 1px solid var(--rule-2);
+}
+
+/* Context-sensitive help: small "?" buttons + shared help popup */
+.help-q {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    margin-left: 5px;
+    border-radius: 50%;
+    border: 1px solid var(--rule-2);
+    background: var(--paper-2);
+    color: var(--ink-3);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    vertical-align: middle;
+}
+.help-q:hover {
+    background: var(--copper);
+    border-color: var(--copper);
+    color: #fff;
+}
+.svnhub-help-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: rgba(28, 26, 22, 0.45);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.svnhub-help-box {
+    background: var(--paper-soft);
+    color: var(--ink);
+    width: min(560px, 100%);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    border-radius: 10px;
+    border: 1px solid var(--rule-2);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+}
+.svnhub-help-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper-2);
+}
+.svnhub-help-title {
+    font-size: 15.5px;
+    font-weight: 700;
+    color: var(--ink);
+}
+.svnhub-help-x {
+    border: 0;
+    background: transparent;
+    font-size: 22px;
+    line-height: 1;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 0 4px;
+}
+.svnhub-help-body {
+    padding: 14px 18px;
+    overflow-y: auto;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+}
+.svnhub-help-body h4 {
+    margin: 12px 0 5px;
+    font-size: 13px;
+    color: var(--ink);
+}
+.svnhub-help-body h4:first-child {
+    margin-top: 0;
+}
+.svnhub-help-body p {
+    margin: 0 0 8px;
+}
+.svnhub-help-body ul {
+    margin: 0 0 8px;
+    padding-left: 20px;
+}
+.svnhub-help-body li {
+    margin: 2px 0;
+}
+.svnhub-help-body code {
+    font-family: var(--mono, monospace);
+    font-size: 12px;
+    background: var(--paper-3);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+.svnhub-help-foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--rule);
+    background: var(--paper-2);
+}
+.svnhub-help-more {
+    color: var(--copper);
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+}
+.svnhub-help-more:hover {
+    text-decoration: underline;
+}
+.svnhub-help-ok {
+    margin-left: auto;
+    border: 1px solid var(--copper);
+    background: var(--copper);
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 6px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
 /* ===================================================================
    Ticket views — the in-place Issue / Merge Request detail + composer
    (shared by screens/Issues and screens/MergeRequests)

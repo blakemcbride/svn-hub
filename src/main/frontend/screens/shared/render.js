@@ -997,9 +997,10 @@ window.SvnHubUI = (function () {
      * Small files expand automatically (within a total budget) so typical
      * commits appear fully rendered; big diffs stay responsive.
      */
-    function renderUnifiedDiff(host, diffText) {
+    function renderUnifiedDiff(host, diffText, opts) {
         if (!host)
             return;
+        opts = opts || {};
         if (!diffText || !String(diffText).trim()) {
             host.innerHTML = '<p class="muted" style="margin:0;">(no differences)</p>';
             return;
@@ -1032,6 +1033,108 @@ window.SvnHubUI = (function () {
         host.innerHTML = html;
         const sections = host.querySelectorAll('.diff-file');
         host.__diffSelection = readDiffSelection(files);
+
+        // ---- inline (per-line) review comments (opt-in via opts) ----
+        const onAddComment = typeof opts.onAddComment === 'function' ? opts.onAddComment : null;
+        const canComment = !!onAddComment && opts.canComment !== false;
+        const fmtC = typeof opts.formatDate === 'function' ? opts.formatDate : (t) => '' + t;
+        const mdC = typeof opts.renderMarkdown === 'function' ? opts.renderMarkdown : (b) => '<p>' + esc(b) + '</p>';
+        const commentsByKey = new Map();   // "fileName\nsrcLine" -> [comment, ...]
+        (opts.comments || []).forEach((c) => {
+            const fp = c.filePath || c.filepath;
+            const ln = (c.lineNo != null) ? c.lineNo : c.lineno;
+            if (!fp || ln == null || ln === '')
+                return;
+            const key = fp + '\n' + ln;
+            if (!commentsByKey.has(key))
+                commentsByKey.set(key, []);
+            commentsByKey.get(key).push(c);
+        });
+        const hasInlineComments = commentsByKey.size > 0 || canComment;
+
+        // The new-side source line number for a diff row (fallback: old side).
+        function srcLineOf(row) {
+            const n2 = row.querySelector('.line-num2');
+            const n1 = row.querySelector('.line-num1');
+            const t2 = n2 ? (n2.textContent || '').trim() : '';
+            const t1 = n1 ? (n1.textContent || '').trim() : '';
+            if (/^\d+$/.test(t2))
+                return Number(t2);
+            if (/^\d+$/.test(t1))
+                return Number(t1);
+            return null;
+        }
+        function commentThreadHtml(list) {
+            let inner = '';
+            for (const c of list)
+                inner += '<div class="dc-item"><div class="dc-meta">' + esc(c.userName || c.username) +
+                    ' &middot; ' + esc(fmtC(c.createdTs || c.createdts)) + '</div>' +
+                    '<div class="dc-body">' + mdC(c.body) + '</div></div>';
+            return inner;
+        }
+        // Inject anchored comments (and mark rows with their source line) into a rendered file body.
+        function injectInlineComments(i, body) {
+            const fname = files[i].name;
+            body.querySelectorAll('tr.diff-selectable-row').forEach((row) => {
+                const src = srcLineOf(row);
+                if (src == null)
+                    return;
+                row.setAttribute('data-src-line', String(src));
+                const list = commentsByKey.get(fname + '\n' + src);
+                if (list && list.length) {
+                    const tr = document.createElement('tr');
+                    tr.className = 'diff-comment-row';
+                    tr.innerHTML = '<td class="diff-comment-cell" colspan="2">' + commentThreadHtml(list) + '</td>';
+                    row.parentNode.insertBefore(tr, row.nextSibling);
+                }
+            });
+        }
+        // Open an inline composer beneath a clicked row (single-line selection only).
+        function showComposer(row, fileIndex) {
+            if (!canComment)
+                return;
+            const src = srcLineOf(row);
+            if (src == null)
+                return;
+            const prior = host.querySelector('tr.diff-compose-row');
+            if (prior)
+                prior.remove();
+            const fname = files[fileIndex].name;
+            const tr = document.createElement('tr');
+            tr.className = 'diff-compose-row';
+            tr.innerHTML = '<td class="diff-comment-cell" colspan="2">' +
+                '<div class="dc-compose">' +
+                    '<div class="dc-compose-head">Comment on <span class="mono">' + esc(fname) + ':' + src + '</span></div>' +
+                    '<textarea class="dc-input" rows="3" placeholder="Leave a review comment…"></textarea>' +
+                    '<div class="dc-compose-actions">' +
+                        '<button type="button" class="dc-cancel">Cancel</button>' +
+                        '<button type="button" class="dc-add">Comment</button>' +
+                    '</div>' +
+                '</div></td>';
+            row.parentNode.insertBefore(tr, row.nextSibling);
+            const ta = tr.querySelector('.dc-input');
+            ta.focus();
+            tr.querySelector('.dc-cancel').addEventListener('click', () => tr.remove());
+            tr.querySelector('.dc-add').addEventListener('click', async () => {
+                const val = ta.value.trim();
+                if (!val)
+                    return;
+                const addBtn = tr.querySelector('.dc-add');
+                addBtn.disabled = true;
+                let ok = false;
+                try {
+                    ok = await onAddComment(fname, src, val);
+                } catch (e) {
+                    ok = false;
+                }
+                if (ok && typeof opts.onChanged === 'function')
+                    opts.onChanged();          // re-render diff + thread with the new comment
+                else if (ok)
+                    tr.remove();
+                else
+                    addBtn.disabled = false;
+            });
+        }
 
         function syncDiffSelectionClasses() {
             sections.forEach((sec, i) => {
@@ -1073,6 +1176,8 @@ window.SvnHubUI = (function () {
                 lineNo.setAttribute('tabindex', '0');
                 lineNo.setAttribute('aria-label', 'Select diff row ' + rowNo);
             });
+            if (hasInlineComments)
+                injectInlineComments(i, body);
             syncDiffSelectionClasses();
             scrollSelectedRowsIntoView(i, body);
         }
@@ -1164,6 +1269,12 @@ window.SvnHubUI = (function () {
                 e.preventDefault();
                 e.stopPropagation();
                 selectDiffRow(lineNo, e);
+                if (canComment && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+                    const row = lineNo.closest('tr[data-diff-row]');
+                    const sec = row && row.closest('.diff-file');
+                    if (row && sec)
+                        showComposer(row, Number(sec.getAttribute('data-df')));
+                }
                 return;
             }
             const head = e.target.closest('.diff-file-head');
@@ -1254,7 +1365,154 @@ window.SvnHubUI = (function () {
 
     initTooltips();
 
+    // ================================================================
+    //  Context-sensitive help — a shared HTML popup + a content map for
+    //  the whole fork / merge-request / merge process.  Any screen drops
+    //  in <button class="help-q" data-help="KEY">?</button> and calls
+    //  SvnHubUI.bindHelpButtons(rootEl) once.
+    // ================================================================
+    const HELP = {
+        'mr-overview': {
+            title: 'Merge requests',
+            more: 'mr',
+            html: '<p>A <b>merge request</b> proposes bringing the changes on one path (a <i>source</i>, ' +
+                'e.g. a branch or a fork) into another (a <i>target</i>, usually <code>/trunk</code>).</p>' +
+                '<p>Reviewers read the generated diff and leave comments; once someone with write access ' +
+                '<b>approves &amp; merges</b>, SVNKit performs the merge on the server and commits it — producing a ' +
+                'new revision on the target.</p>'
+        },
+        'mr-source': {
+            title: 'Source path',
+            more: 'mr',
+            html: '<p>The path whose changes you want to merge — typically a branch such as ' +
+                '<code>/branches/feature</code>. For a fork&nbsp;&rarr;&nbsp;origin request this is usually ' +
+                '<code>/trunk</code> of your fork.</p>'
+        },
+        'mr-target': {
+            title: 'Target path',
+            more: 'mr',
+            html: '<p>The path the changes are merged <i>into</i> — usually <code>/trunk</code>. ' +
+                'Approving the request commits the merged result here as a new revision.</p>'
+        },
+        'mr-destination': {
+            title: 'Merge into (this repository vs. upstream)',
+            more: 'fork',
+            html: '<p>When you are in a <b>fork</b>, you can aim the request two ways:</p>' +
+                '<ul><li><b>This repository</b> — an ordinary branch&nbsp;&rarr;&nbsp;target merge inside your fork.</li>' +
+                '<li><b>Upstream</b> — propose your fork’s changes back to the repository you forked from. ' +
+                'The request then lives in the upstream repo, and only someone with write access there can merge it.</li></ul>'
+        },
+        'mr-commits': {
+            title: 'Commits to include',
+            more: 'mr',
+            html: '<p>By default <b>all</b> eligible commits are merged. To cherry-pick, list specific source ' +
+                'revisions instead:</p>' +
+                '<ul><li><code>5</code> — just revision 5</li>' +
+                '<li><code>3-7</code> — revisions 3 through 7 inclusive</li>' +
+                '<li><code>3-7,10,12-15</code> — any combination</li></ul>' +
+                '<p>Numbers are the source repository’s SVN revisions. Non-selected revisions in the middle are skipped.</p>'
+        },
+        'mr-review': {
+            title: 'Reviewing & commenting',
+            more: 'mr',
+            html: '<p>The <b>Changes</b> section shows the diff the merge would apply. Add a general note in the ' +
+                'comment box at the bottom, or <b>click any line number</b> in the diff to leave an <i>inline</i> ' +
+                'comment anchored to that file and line.</p>' +
+                '<p>Anyone who can see the repository can review and comment; you don’t need write access to comment.</p>'
+        },
+        'mr-merge': {
+            title: 'Approve & Merge',
+            more: 'mr',
+            html: '<p><b>Approve &amp; Merge</b> performs the real merge via SVNKit and commits it to the target, ' +
+                'advancing the repository to a new revision. It is enabled only while the request is open and only ' +
+                'for users with <b>write</b> access to the target repository.</p>' +
+                '<p>For a fork&nbsp;&rarr;&nbsp;origin request, only the applied <i>commits to include</i> are merged.</p>'
+        },
+        'mr-close': {
+            title: 'Closing a request',
+            more: 'mr',
+            html: '<p><b>Close request</b> declines the proposal without merging. The author or anyone with write ' +
+                'access can close it. Closing changes nothing in the repository history.</p>'
+        },
+        'fork': {
+            title: 'Forking a repository',
+            more: 'fork',
+            html: '<p>A <b>fork</b> is your own full-history copy of someone else’s repository, under your account. ' +
+                'You get read/write on your fork and can commit freely.</p>' +
+                '<p>It is a point-in-time snapshot — later changes upstream don’t flow in automatically. ' +
+                'To contribute your work back, commit to your fork, then open a merge request with ' +
+                '<b>Merge into: Upstream</b>.</p>'
+        }
+    };
+
+    function hideHelp() {
+        const m = document.getElementById('svnhub-help-modal');
+        if (m)
+            m.style.display = 'none';
+    }
+    function showHelp(title, html, moreTopic) {
+        let modal = document.getElementById('svnhub-help-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'svnhub-help-modal';
+            modal.className = 'svnhub-help-modal';
+            modal.innerHTML =
+                '<div class="svnhub-help-box" role="dialog" aria-modal="true">' +
+                    '<div class="svnhub-help-head">' +
+                        '<span class="svnhub-help-title"></span>' +
+                        '<button type="button" class="svnhub-help-x" aria-label="Close help">&times;</button>' +
+                    '</div>' +
+                    '<div class="svnhub-help-body"></div>' +
+                    '<div class="svnhub-help-foot">' +
+                        '<a href="#" class="svnhub-help-more" style="display:none;">Full guide &rarr;</a>' +
+                        '<button type="button" class="svnhub-help-ok">Got it</button>' +
+                    '</div>' +
+                '</div>';
+            document.body.appendChild(modal);
+            modal.addEventListener('click', (e) => { if (e.target === modal) hideHelp(); });
+            modal.querySelector('.svnhub-help-x').addEventListener('click', hideHelp);
+            modal.querySelector('.svnhub-help-ok').addEventListener('click', hideHelp);
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && modal.style.display !== 'none')
+                    hideHelp();
+            });
+        }
+        modal.querySelector('.svnhub-help-title').textContent = title || 'Help';
+        modal.querySelector('.svnhub-help-body').innerHTML = html || '';
+        const more = modal.querySelector('.svnhub-help-more');
+        if (moreTopic && typeof Router !== 'undefined' && typeof Utils !== 'undefined') {
+            more.style.display = '';
+            more.onclick = (e) => {
+                e.preventDefault();
+                hideHelp();
+                Utils.saveData('helpTopic', moreTopic);
+                Router.go('/help');
+            };
+        } else {
+            more.style.display = 'none';
+            more.onclick = null;
+        }
+        modal.style.display = 'flex';
+    }
+    // Delegate clicks on <button class="help-q" data-help="KEY"> under root.
+    function bindHelpButtons(root) {
+        if (!root || root.__helpBound)
+            return;
+        root.__helpBound = true;
+        root.addEventListener('click', (e) => {
+            const btn = e.target.closest('.help-q[data-help]');
+            if (!btn)
+                return;
+            e.preventDefault();
+            e.stopPropagation();
+            const h = HELP[btn.getAttribute('data-help')];
+            if (h)
+                showHelp(h.title, h.html, h.more);
+        });
+    }
+
     return {esc: esc, initials: initials, personInitials: personInitials, tone: tone, fmtDate: fmtDate,
+        showHelp: showHelp, bindHelpButtons: bindHelpButtons,
         relTime: relTime, repoCard: repoCard, statBlock: statBlock, contributorBars: contributorBars,
         weeklySpark: weeklySpark, topReposList: topReposList, commitMessage: commitMessage,
         spinner: spinner, createDebouncedRunner: createDebouncedRunner,

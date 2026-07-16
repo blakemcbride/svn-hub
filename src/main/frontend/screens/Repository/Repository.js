@@ -1230,7 +1230,8 @@
         if (forkNote) {
             if (repo.forkOriginId && repo.forkOriginKey) {
                 forkNote.innerHTML = 'Forked from <button type="button" class="repo-owner-link" id="repo-fork-origin-link">' +
-                    escapeHtml(repo.forkOriginKey) + '</button>';
+                    escapeHtml(repo.forkOriginKey) + '</button> ' +
+                    '<button type="button" class="help-q" data-help="fork" aria-label="Help: forks">?</button>';
                 forkNote.hidden = false;
                 const originLink = document.getElementById('repo-fork-origin-link');
                 if (originLink)
@@ -1272,14 +1273,21 @@
         });
     }
     const forkBtn = $$('repo-fork');
+    const forkHelp = document.getElementById('repo-fork-help');
     if (forkBtn) {
         if (!guest && currentRepo && !currentRepo.owned) {
             forkBtn.onclick(doForkRepo);
             forkBtn.show();
+            if (forkHelp)
+                forkHelp.hidden = false;
         } else {
             forkBtn.hide();
+            if (forkHelp)
+                forkHelp.hidden = true;
         }
     }
+    if (SvnHubUI.bindHelpButtons)
+        SvnHubUI.bindHelpButtons(document.querySelector('.repo-workspace'));
 
     const reErr = document.getElementById('re-name-err');
     function showEditRepoError(msg) {
