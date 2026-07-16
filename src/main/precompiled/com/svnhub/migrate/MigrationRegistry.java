@@ -15,7 +15,7 @@ import java.util.List;
 public final class MigrationRegistry {
 
     /** The db_version the current code expects. */
-    public static final int CURRENT_DB_VERSION = 5;
+    public static final int CURRENT_DB_VERSION = 6;
 
     private static final List<Migration> MIGRATIONS;
 
@@ -25,6 +25,7 @@ public final class MigrationRegistry {
         m.add(new Migration003AddIndexes());            // v3
         m.add(new Migration004AddEmailVerification());  // v4
         m.add(new Migration005AddFork());               // v5
+        m.add(new Migration006AddMrRevSpec());          // v6
         MIGRATIONS = Collections.unmodifiableList(m);
     }
 

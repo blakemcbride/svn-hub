@@ -415,6 +415,118 @@ public final class SvnRepo {
         return unifiedDiff(srcFsPath, sourcePath, baseRev, sourceHead);
     }
 
+    // -------------------------------------------------- cherry-picked revisions
+
+    /**
+     * Intra-repository cherry-pick merge: apply only the selected source
+     * revisions onto {@code targetPath} and commit.  {@code ranges} is a list of
+     * <b>inclusive</b> {@code [from,to]} revision pairs (see {@link RevSpec});
+     * each becomes the SVN range {@code (from-1, to]}.  Records mergeinfo
+     * (useAncestry).
+     *
+     * @return the new revision number, or -1 if the merge produced no change
+     */
+    public static long mergeRevisions(String fsPath, String sourcePath, String targetPath,
+                                      List<long[]> ranges, String message, String author) throws SVNException {
+        SVNClientManager cm = SVNClientManager.newInstance(SVNWCUtil.createDefaultOptions(true), author, null);
+        File wc = null;
+        try {
+            wc = Files.createTempDirectory("svnhub-cpmerge-").toFile();
+            SVNURL targetUrl = childUrl(fsPath, targetPath);
+            SVNURL sourceUrl = childUrl(fsPath, sourcePath);
+
+            SVNUpdateClient uc = cm.getUpdateClient();
+            uc.doCheckout(targetUrl, wc, SVNRevision.HEAD, SVNRevision.HEAD, SVNDepth.INFINITY, false);
+
+            SVNDiffClient dc = cm.getDiffClient();
+            dc.doMerge(sourceUrl, SVNRevision.HEAD, toSvnRanges(ranges),
+                    wc, SVNDepth.INFINITY, true, false, false, false);
+
+            SVNCommitClient cc = cm.getCommitClient();
+            SVNCommitInfo info = cc.doCommit(new File[] {wc}, false, message, null, null,
+                    false, false, SVNDepth.INFINITY);
+            return info == null ? -1 : info.getNewRevision();
+        } catch (SVNException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            cm.dispose();
+            if (wc != null)
+                deleteTree(wc);
+        }
+    }
+
+    /**
+     * Foreign (cross-repository) cherry-pick merge: apply only the selected
+     * revisions of a fork's {@code sourcePath} onto another repository's
+     * {@code targetPath} and commit.  Ignores ancestry / records no mergeinfo
+     * (the repositories have different UUIDs).  {@code ranges} as in
+     * {@link #mergeRevisions}.
+     *
+     * @return the new revision number on the target, or -1 if the merge produced no change
+     */
+    public static long mergeForeignRevisions(String srcFsPath, String sourcePath, List<long[]> ranges,
+                                             String dstFsPath, String targetPath,
+                                             String message, String author) throws SVNException {
+        SVNClientManager cm = SVNClientManager.newInstance(SVNWCUtil.createDefaultOptions(true), author, null);
+        File wc = null;
+        try {
+            wc = Files.createTempDirectory("svnhub-cpfmerge-").toFile();
+            SVNURL targetUrl = childUrl(dstFsPath, targetPath);
+            SVNURL sourceUrl = childUrl(srcFsPath, sourcePath);
+            long sourceHead = open(srcFsPath).getLatestRevision();
+
+            SVNUpdateClient uc = cm.getUpdateClient();
+            uc.doCheckout(targetUrl, wc, SVNRevision.HEAD, SVNRevision.HEAD, SVNDepth.INFINITY, false);
+
+            SVNDiffClient dc = cm.getDiffClient();
+            dc.doMerge(sourceUrl, SVNRevision.create(sourceHead), toSvnRanges(ranges),
+                    wc, SVNDepth.INFINITY, false, false, false, false);
+
+            SVNCommitClient cc = cm.getCommitClient();
+            SVNCommitInfo info = cc.doCommit(new File[] {wc}, false, message, null, null,
+                    false, false, SVNDepth.INFINITY);
+            return info == null ? -1 : info.getNewRevision();
+        } catch (SVNException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            cm.dispose();
+            if (wc != null)
+                deleteTree(wc);
+        }
+    }
+
+    /**
+     * Preview of a cherry-pick merge: the unified diff of the selected
+     * revisions of {@code path}, computed as a leak-free URL-vs-URL diff per
+     * range (each inclusive {@code [from,to]} diffed as {@code from-1 .. to}) and
+     * concatenated.  Works within a single repository or a fork (the source's own
+     * revisions).
+     */
+    public static String diffRevisions(String fsPath, String path, List<long[]> ranges) throws SVNException {
+        StringBuilder sb = new StringBuilder();
+        for (long[] r : ranges) {
+            String d = unifiedDiff(fsPath, path, r[0] - 1, r[1]);
+            if (d != null && !d.isEmpty()) {
+                if (sb.length() > 0)
+                    sb.append('\n');
+                sb.append(d);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Convert inclusive [from,to] revision pairs to SVN ranges (from-1, to]. */
+    private static List<SVNRevisionRange> toSvnRanges(List<long[]> inclusive) {
+        List<SVNRevisionRange> out = new ArrayList<>();
+        for (long[] r : inclusive)
+            out.add(new SVNRevisionRange(SVNRevision.create(r[0] - 1), SVNRevision.create(r[1])));
+        return out;
+    }
+
     // ----------------------------------------------------------------- helpers
 
     private static SVNURL childUrl(String fsPath, String path) throws SVNException {

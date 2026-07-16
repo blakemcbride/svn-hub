@@ -8,6 +8,7 @@ import org.kissweb.restServer.ProcessServlet
 import org.kissweb.UserException
 import com.svnhub.RepoAccess
 import com.svnhub.SvnRepo
+import com.svnhub.RevSpec
 
 /**
  * Code review / merge requests: a proposal to merge one path (e.g. a branch)
@@ -24,6 +25,7 @@ class MergeRequestService {
         String status = injson.getString("status", "")
         String sql = """select m.number as "number", m.title as "title", m.status as "status",
                 m.source_path as "sourcePath", m.target_path as "targetPath", m.source_repo_id as "sourceRepoId",
+                m.rev_spec as "revSpec",
                 m.created_ts as "createdTs", m.merged_rev as "mergedRev", u.user_name as "createdBy"
                 from merge_request m join users u on u.user_id = m.created_by where m.repo_id = ?"""
         JSONArray rows
@@ -57,6 +59,7 @@ class MergeRequestService {
             Record sr = db.fetchOne("select repo_key from repository where repo_id = ?", srcRepoId)
             mr.put("sourceRepoKey", sr?.getString("repo_key"))
         }
+        mr.put("revSpec", m.getString("rev_spec"))   // null == all revisions
         mr.put("mergedRev", m.getInt("merged_rev"))
         mr.put("createdBy", m.getString("created_by_name"))
         mr.put("createdTs", m.getLong("created_ts"))
@@ -115,6 +118,15 @@ class MergeRequestService {
         int number = db.fetchOne("select coalesce(max(number),0)+1 as n from merge_request where repo_id = ?", repoId).getInt("n")
         long targetHead = SvnRepo.getLatestRevision(RepoAccess.fsPath(db, repoId))
         long sourceHead = SvnRepo.getLatestRevision(RepoAccess.fsPath(db, sourceRepoId))
+
+        // Optional "commits to include" spec (all / N / N-M / comma combos) — validate
+        // against the source's own revisions now; stored null when it means "all".
+        String revSpec = injson.getString("revSpec", "")
+        if (revSpec != null)
+            revSpec = revSpec.trim()
+        long specMin = crossRepo ? forkBaseRev(db, sourceRepoId) + 1 : 1L
+        RevSpec.parse(revSpec, specMin, sourceHead)   // throws UserException on malformed / out-of-range input
+
         Record rec = db.newRecord("merge_request")
         rec.set("repo_id", repoId)
         rec.set("number", number)
@@ -127,6 +139,7 @@ class MergeRequestService {
         rec.set("status", "open")
         rec.set("source_rev", (int) sourceHead)
         rec.set("target_rev", (int) targetHead)
+        rec.set("rev_spec", RevSpec.isAll(revSpec) ? null : revSpec)   // null == all
         rec.set("created_by", userId)
         rec.set("created_ts", System.currentTimeMillis())
         rec.addRecord()
@@ -139,19 +152,25 @@ class MergeRequestService {
         int repoId = injson.getInt("repoId")
         RepoAccess.requireRead(db, userId, repoId)
         int number = injson.getInt("number")
-        Record m = db.fetchOne("select source_path, target_path, source_repo_id from merge_request where repo_id = ? and number = ?", repoId, number)
+        Record m = db.fetchOne("select source_path, target_path, source_repo_id, rev_spec from merge_request where repo_id = ? and number = ?", repoId, number)
         if (m == null)
             throw new UserException("Merge request not found.")
         String targetFsPath = RepoAccess.fsPath(db, repoId)
         Integer srcRepoId = m.getInt("source_repo_id")
+        List<long[]> ranges = revRanges(db, m.getString("rev_spec"), srcRepoId, repoId)   // null == all
         if (srcRepoId == null || srcRepoId == repoId) {
-            // intra-repo: diff target..source (what source would bring into target)
-            outjson.put("diff", SvnRepo.diffPaths(targetFsPath, m.getString("target_path"), -1L, m.getString("source_path"), -1L))
+            // intra-repo
+            if (ranges == null)
+                outjson.put("diff", SvnRepo.diffPaths(targetFsPath, m.getString("target_path"), -1L, m.getString("source_path"), -1L))
+            else
+                outjson.put("diff", SvnRepo.diffRevisions(targetFsPath, m.getString("source_path"), ranges))
         } else {
-            // cross-repo (fork): the fork's own changes since the fork point (URL diff within the fork)
+            // cross-repo (fork)
             String srcFsPath = RepoAccess.fsPath(db, srcRepoId)
-            long baseRev = forkBaseRev(db, srcRepoId)
-            outjson.put("diff", SvnRepo.diffForeign(srcFsPath, m.getString("source_path"), baseRev))
+            if (ranges == null)
+                outjson.put("diff", SvnRepo.diffForeign(srcFsPath, m.getString("source_path"), forkBaseRev(db, srcRepoId)))
+            else
+                outjson.put("diff", SvnRepo.diffRevisions(srcFsPath, m.getString("source_path"), ranges))
         }
     }
 
@@ -199,14 +218,20 @@ class MergeRequestService {
                   " (merge request #" + number + ")"
 
         Integer srcRepoId = m.getInt("source_repo_id")
+        List<long[]> ranges = revRanges(db, m.getString("rev_spec"), srcRepoId, repoId)   // null == all
         long newRev
         if (srcRepoId == null || srcRepoId == repoId) {
-            newRev = SvnRepo.merge(targetFsPath, m.getString("source_path"), m.getString("target_path"), msg, author)
+            if (ranges == null)
+                newRev = SvnRepo.merge(targetFsPath, m.getString("source_path"), m.getString("target_path"), msg, author)
+            else
+                newRev = SvnRepo.mergeRevisions(targetFsPath, m.getString("source_path"), m.getString("target_path"), ranges, msg, author)
         } else {
-            // cross-repo (fork -> origin): foreign merge of the fork's divergent work
+            // cross-repo (fork -> origin): foreign merge of the fork's selected revisions
             String srcFsPath = RepoAccess.fsPath(db, srcRepoId)
-            long baseRev = forkBaseRev(db, srcRepoId)
-            newRev = SvnRepo.mergeForeign(srcFsPath, m.getString("source_path"), baseRev, targetFsPath, m.getString("target_path"), msg, author)
+            if (ranges == null)
+                newRev = SvnRepo.mergeForeign(srcFsPath, m.getString("source_path"), forkBaseRev(db, srcRepoId), targetFsPath, m.getString("target_path"), msg, author)
+            else
+                newRev = SvnRepo.mergeForeignRevisions(srcFsPath, m.getString("source_path"), ranges, targetFsPath, m.getString("target_path"), msg, author)
         }
 
         m.set("status", "merged")
@@ -244,5 +269,19 @@ class MergeRequestService {
         Record r = db.fetchOne("select fork_base_rev from repository where repo_id = ?", forkRepoId)
         Integer b = r == null ? null : r.getInt("fork_base_rev")
         return b == null ? 0L : (long) b
+    }
+
+    /**
+     * Parse a stored rev_spec into inclusive [from,to] ranges against the SOURCE's
+     * current revisions, or null for "all".  Bounds: a fork's divergent window
+     * (fork_base_rev+1 .. HEAD) for a cross-repo request, else 1 .. HEAD.
+     */
+    private static List<long[]> revRanges(Connection db, String revSpec, Integer srcRepoId, int repoId) {
+        if (RevSpec.isAll(revSpec))
+            return null
+        int sourceRepoId = (srcRepoId == null) ? repoId : (int) srcRepoId
+        long maxRev = SvnRepo.getLatestRevision(RepoAccess.fsPath(db, sourceRepoId))
+        long minRev = (srcRepoId != null && srcRepoId != repoId) ? forkBaseRev(db, srcRepoId) + 1 : 1L
+        return RevSpec.parse(revSpec, minRev, maxRev)
     }
 }

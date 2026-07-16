@@ -104,9 +104,19 @@ framework reference — read it before changing framework code.
   BASE-vs-WORKING diff leaks a `<name>.tmp` per file into the server's CWD — SVNKit resolves the
   detranslate temp against the process CWD, which the JVM cannot relocate. The within-fork URL
   diff has neither problem and needs no checkout/merge.)
+- **Selecting specific commits (cherry-pick).** A merge request optionally carries a
+  `merge_request.rev_spec` (migration v6): `all`/empty (default = every eligible revision),
+  a single revision `N`, a range `N-M` (inclusive), or a comma combination like `3-7,10,12-15`.
+  `com.svnhub.RevSpec` parses it (unit-tested in `RevSpecTest`) into normalized inclusive
+  `[from,to]` pairs, validated against the source's own revisions — for a fork, the divergent
+  window `fork_base_rev+1 .. HEAD`; else `1 .. HEAD`. Each inclusive `[from,to]` becomes the SVN
+  range `(from-1, to]`. `SvnRepo.mergeRevisions` / `mergeForeignRevisions` apply the selected
+  ranges via `doMerge` (a `Collection<SVNRevisionRange>`, so non-contiguous cherry-picks skip the
+  gaps); `SvnRepo.diffRevisions` previews them as concatenated per-range URL diffs (leak-free).
+  `null`/all keeps the original whole-range merge & preview.
 - **Limitations (v1):** cross-repo MRs are only fork->direct-origin (no fork-of-fork or
   sibling-fork targets); no "sync/pull from upstream" (snapshot only); forks cost full disk
-  (no dedup). Frontend wiring (Fork button, "forked from" badge, MR source picker) is separate.
+  (no dedup).
 
 ## Data model (`schema.sql`, PostgreSQL)
 Timestamps are `bigint` epoch-ms; day buckets are `integer` YYYYMMDD; flags are

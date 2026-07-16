@@ -250,6 +250,7 @@
         $$('mn-target').setValue('/trunk');
         $$('mn-title').clear();
         $$('mn-body').clear();
+        $$('mn-revs').clear();   // blank => all commits
         // Destination picker: only a fork can propose merging back into its origin.
         const destField = document.getElementById('mn-dest-field');
         if (forkInfo) {
@@ -277,7 +278,8 @@
             sourcePath: $$('mn-source').getValue(),
             targetPath: $$('mn-target').getValue(),
             title: $$('mn-title').getValue(),
-            body: $$('mn-body').getValue()
+            body: $$('mn-body').getValue(),
+            revSpec: $$('mn-revs').getValue()
         };
         if (dest) {
             params.repoId = Number(dest);   // the MR lives in the upstream origin...
@@ -318,6 +320,7 @@
             '<span class="ticket-pill ' + cls + '">' + statusIcon(cls) + esc(cls) + '</span>' +
             '<span>opened by <b>' + esc(m.createdBy) + '</b></span>' +
             '<span class="ticket-dotsep">&middot;</span><span>' + esc(fmtDate(m.createdTs)) + '</span>' +
+            (m.revSpec ? '<span class="ticket-dotsep">&middot;</span><span>commits <span class="mono">' + esc(m.revSpec) + '</span></span>' : '') +
             (m.mergedRev ? '<span class="ticket-dotsep">&middot;</span><span class="mono">merged as r' + esc(m.mergedRev) + '</span>' : '');
         const srcRepoLabel = m.sourceRepoKey ? (esc(m.sourceRepoKey) + '&nbsp;:&nbsp;') : '';
         document.getElementById('md-path').innerHTML =
