@@ -27,7 +27,7 @@ The CRITICAL rule above is easy to state and easy to violate in practice. Apply 
 1. No application-specific references — no application, product, or company names, and no application-domain concepts, in code, comments, documentation, or identifiers. Use neutral generic terms.
 2. No brand-specific values baked in — colors, logos, copy, fonts, URLs, or dimensions tuned to one application. (For example, never hardcode a brand color such as `rgba(r, g, b)` inside a framework component.)
 3. No secrets or environment literals — URLs, API keys, passwords, and tokens belong in `application.ini`, read via `MainServlet.getEnvironment()`.
-4. Parameterize instead of hardcoding — expose application-specific values as CSS custom properties, configuration keys, or override hooks WITH NEUTRAL DEFAULTS in the framework; the application supplies its specifics from the application layer (application theme CSS, `application.ini`). Example: the framework reads a `--glow-color` CSS variable with a neutral default, and the application sets its own brand color in its theme file.
+4. Parameterize instead of hardcoding — expose application-specific values as CSS custom properties, configuration keys, or override hooks WITH NEUTRAL DEFAULTS in the framework; the application supplies its specifics from the application layer (application theme CSS, `application.ini`). Example: the framework reads a `--kiss-glow-color` CSS variable with a neutral default, and the application sets its own brand color in its theme file.
 5. The change must be a generic capability any Kiss application could use — never something that only makes sense for one application.
 6. When a component's behavior or API changes, update its documentation in `src/main/frontend/kiss/component/components.js` in the same change.
 
@@ -121,7 +121,10 @@ Kiss/
 
 6. **LLM Integration**
    - Ollama integration ready (`org.kissweb.llm.Ollama`) — single-prompt `send()` (`/api/generate`) plus multi-turn, role-structured `chat(messages)` / `chat(messages, tools)` (`/api/chat`), which gives correct per-model chat templating, explicit system/user/assistant roles, and a `tools` hook for function calling. The blocking calls request `stream:false` (a single JSON object). Streaming overloads `send(prompt, Consumer<String> onToken)` and `chat(messages, onToken)` request `stream:true`, deliver each chunk to `onToken` as the model produces it, and also return the full assembled text (pass `null` for `onToken` to just assemble); they read Ollama's newline-delimited stream via `RestClient.streamCall`
-   - OpenAI API support
+   - OpenAI API support (`org.kissweb.llm.OpenAI`) — chat completions, streaming, images, and embeddings. The provider serves models through two endpoints (chat completions and the newer responses endpoint), and some models are available only on the latter. By default (`Api.AUTO`) this is handled automatically: a request goes to chat completions, and when the provider answers that the model requires the responses endpoint (HTTP 404 naming it), the same request is transparently re-sent there — nothing has been delivered to the caller yet, so the retry is invisible — and that model is remembered for the life of the JVM so later requests go straight to it. `setApi(Api.CHAT_COMPLETIONS)` / `setApi(Api.RESPONSES)` pin one endpoint (e.g. for a gateway implementing only one); `setResponsesUrl(String)` overrides the responses URL globally, as `setUrl(String)` does for chat completions. Because `send()` is built on `stream()`, both paths get this
+   - Anthropic (Claude) API support (`org.kissweb.llm.Anthropic`) — `temperature` and `top_p` are sent to the Messages API only when the caller explicitly sets them via `setTemperature`/`setSampling`; the two setters are mutually exclusive (setting one clears the other), and by default neither is sent. This matters because the current Anthropic Messages API rejects a request that specifies both `temperature` and `top_p` together for current models (HTTP 400 `invalid_request_error`); sending neither lets the model apply its own default and is the configuration verified to work out of the box
+   - OpenRouter support (`org.kissweb.llm.OpenRouter`) — OpenAI-compatible cloud gateway to many model providers (models named `provider/model`, e.g. `openai/gpt-4o`) through one API key; same `send`/`stream` API as the other cloud classes, plus optional model fallback routing (`setFallbackModels`; OpenRouter rejects invalid model IDs outright — fallback engages only between valid models when a provider fails), unified reasoning-effort control (`setReasoningEffort`), and attribution headers (`setSiteUrl`/`setSiteName`)
+   - All three cloud classes (`OpenAI`, `Anthropic`, `OpenRouter`) throw an exception on failed calls carrying the HTTP status and the provider's error body — including errors reported mid-stream as SSE error events — rather than returning silently empty text; the status and error body are also kept in `getResponseCode()`/`getResponseString()`
 
 7. **Desktop Support**
    - Electron compatibility for desktop apps
@@ -141,6 +144,24 @@ UserInactiveSeconds = 900
 ### Ini File Path Resolution (org.kissweb.IniFile)
 
 `IniFile.load(String)` and `IniFile.save(String)` resolve a filename the **same** way (a single shared rule): an absolute path is used verbatim; a relative path is resolved against `MainServlet.getApplicationPath()` (the backend directory), or against the current working directory when the application path is not set (null/empty). A file written with a given relative name is therefore read back with that same name. (Constructing `new IniFile(fname)` followed by no-arg `save()` writes to whatever path was supplied/loaded.)
+
+### Database Connection Failure at Startup
+
+When a database **is** configured in `application.ini` but cannot be reached at
+startup (server down, database dropped/nonexistent, bad credentials), Kiss
+logs an unmistakable multi-line FATAL banner naming the database and the
+underlying error, and then fails this web application's deployment. The
+servlet container (Tomcat) itself is deliberately left running — a bad
+database must never take down the container or other applications it hosts on
+a production system. Note that with the context disabled, requests get a bare
+404/503 with no application headers, which browsers may misreport (e.g. as a
+CORS policy failure) — the banner in `tomcat/logs/catalina.out` is where the
+real cause is found. Running with **no** database configured remains supported
+and is unaffected.
+
+Implementation: `MainServlet.databaseConnectionFatal()` (logs the banner),
+invoked from the `makeDatabaseConnection()` failure path in
+`initializeSystem()`, which then throws to abort the context.
 
 ### Secrets and External Configuration
 
@@ -185,11 +206,106 @@ class ServiceName {
 ## Development Commands
 
 - `./bld develop` - Start both frontend and backend development servers
-- `./bld -v build` - Build the application (compiles all Java files including precompiled directory)
+
+  `develop` (on keypress) and `stop-backend` stop Tomcat by sending the
+  SHUTDOWN command directly to the configured shutdown port. If Tomcat is not
+  running — e.g. it crashed or was never started — they print one clear line
+  pointing at `tomcat/logs/catalina.out` instead of a SEVERE stack trace (with
+  a single 2-second retry in case Tomcat was still starting).
+- `./bld -v build` - Build the application (compiles all Java files including precompiled directory).
+  Note: `build` also creates the **production** WAR and deploys it to the local
+  tomcat as `webapps/ROOT.war`. Left in place, tomcat would re-explode that WAR
+  over `ROOT` on the next startup, replacing the development tree — most visibly
+  `web.xml`, whose production CORS allow-list rejects the cross-origin development
+  front-end (the browser shows a CORS preflight failure on every service call).
+  `develop` and `start-backend` therefore remove any stale `ROOT.war`
+  (`Tasks.removeDeployedWar()`) before starting tomcat: development always runs
+  from the exploded tree.
 - `./bld war` - Create WAR file for deployment
-- `./bld -v test` - Run unit tests
+- `./bld -v unit-tests` - Build `work/KissUnitTest.jar`, a self-contained JUnit 5 console-launcher jar
+  (Kiss core + precompiled + test classes + JUnit + Log4j + jakarta.servlet-api, all unpacked and
+  re-jarred together with a `Main-Class: org.junit.platform.console.ConsoleLauncher` manifest). There is
+  no separate `test` task - `unit-tests` only builds the jar; run the tests with:
+  ```
+  java -jar work/KissUnitTest.jar --scan-class-path=work/KissUnitTest.jar
+  ```
+  The explicit `--scan-class-path=work/KissUnitTest.jar` argument is required. `java -jar` sets the
+  running JVM's classpath to just that one jar, but a bare `--scan-class-path` (no argument) scans the
+  JVM's classpath *entries* looking for directories/jars to open separately - it does not also imply
+  "scan the jar this launcher is itself running from." Pointing it explicitly at the jar makes the
+  launcher open and scan that jar's own classes.
 - `./bld clean` - Clean build artifacts
 - `./bld javadoc` - Generate JavaDoc documentation
+
+### Build System Architecture
+
+The `bld` system is three Java files, compiled together by the `bld` / `bld.cmd`
+bootstrap scripts:
+
+- `src/main/core/org/kissweb/BuildUtils.java` — fully generic build utilities
+  (compile, jar, download, copy, run). Contains nothing Kiss- or Tomcat-specific,
+  because it is also used as part of a generic build system unrelated to Kiss.
+- `src/main/core/org/kissweb/KissBuildUtils.java` — build procedures common to
+  every Kiss application: the four development ports and the `-dp/-bp/-sp/-fp`
+  option parsing (`consumePortOptions`), single-call port-block assignment
+  (`setPortBase`), Tomcat install and port stamping
+  (`installTomcat(version)`), `shutdownTomcat()`, WAR cache-busting stamping
+  (`stampVersion(explodedDir)`), `getTomcatPath()`, and `stopFrontendServer()`.
+- `src/main/precompiled/Tasks.java` — this application's build tasks and
+  dependency lists only (per-application; not shared).
+
+When generic build functionality accumulates in `Tasks.java`, upstream it into
+`KissBuildUtils.java` (Kiss-wide) or `BuildUtils.java` (universally generic) —
+never Kiss/Tomcat-specific code into `BuildUtils.java`.
+
+**`pom.xml` is generated.** Maven does not build Kiss; `pom.xml` only describes the
+project to an IDE and to repository scanners. Because nothing exercises it, a
+hand-maintained dependency list there falls behind silently, and stale entries are
+still reported against the project as real. The `pom` task therefore rewrites
+everything between the `BEGIN/END GENERATED DEPENDENCIES` markers from the same
+`ForeignDependencies` the build downloads — **edit dependencies in `Tasks.java`, never
+in `pom.xml`**. It runs as part of `libs` (so any build re-syncs it) and rewrites only
+when content actually changes. Everything outside the markers, including the whole
+`<build>` section, stays hand-maintained. The generic half (`MavenDependencies`,
+`mavenCoordinatesFromUrl`) lives in `BuildUtils`; `Tasks.java` supplies only
+application data — test-scoped artifact names and the locally supplied jars.
+
+**Foreign dependency pruning.** `downloadAll` (`BuildUtils`) removes superseded
+versions of the dependencies it manages, so changing a version in `Tasks.java`
+drops the old jar instead of leaving both on the classpath — where which one wins
+is arbitrary and the resulting failure appears far from its cause. A file is
+removed only when its artifact name is *exactly* a current dependency's, it
+carries a version, and it is not the wanted file. The exact match keeps sibling
+artifacts independent (`pdfbox` never matches `pdfbox-io`, `log4j-api` never
+matches `log4j-core`), and files belonging to artifacts that are not dependencies
+are never touched. The download cache is deliberately not pruned, so a reverted
+version is restored without re-downloading.
+
+**Development port block.** All four development ports come from a single
+variable at the top of `Tasks.java` — `private static int portBase = 8000;` —
+which `Tasks.main()` always passes to `setPortBase` (before
+`consumePortOptions`, so the `-dp/-bp/-sp/-fp` options still override
+individual ports). The block is consecutive: **frontend = portBase, backend =
+portBase+1, shutdown = portBase+2, debug = portBase+3** (default 8000 →
+8000/8001/8002/8003). Give each Kiss application a unique `portBase` and they
+all run in development mode simultaneously without port clashes. `bld help`
+shows the live values.
+
+The front end finds the back end with no configuration:
+
+- A page served by the front-end dev server calls the back end at **its own
+  port + 1** (the block convention; see `index.js`).
+- Copies served by Tomcat itself are stamped `SystemInfo.sameOriginBackend =
+  true` (`KissBuildUtils.stampSameOriginBackend`, applied to the WAR staging by
+  `stampVersion` and to `tomcat/webapps/ROOT` by develop/start-backend), so
+  those pages call the back end at the page's own origin — this makes browsing
+  the Tomcat origin directly, and any production port, work for any base. The
+  source `SystemInfo.js` ships `false` and is never stamped.
+- `SystemInfo.backendUrl`, when set, overrides everything (split deployments,
+  or when the `-fp`/`-bp` flags break the +1 convention).
+- Electron (`file://`) defaults to `http://localhost:8001` (the default
+  block's back end); applications with a different base set
+  `SystemInfo.backendUrl`.
 
 ## Documentation System
 
@@ -239,6 +355,46 @@ manual/
   BuildUtils.runShell(exportCmd)
   ```
 
+### Connection Pool Sizing
+
+Pool sizes are derived from **`MaxWorkerThreads`**, not from the CPU count, and default to:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `DatabaseMinPoolSize` | 1 | permanent floor, held open even while idle |
+| `DatabaseInitialPoolSize` | = minimum | opened at startup |
+| `DatabaseMaxPoolSize` | `MaxWorkerThreads + 5` | ceiling |
+| `DatabaseAcquireIncrement` | 2 | connections added at a time when growing |
+
+**Why worker threads and not cores.** `QueueManager` runs a fixed thread pool of
+`MaxWorkerThreads`, and each in-flight service holds exactly one connection for its
+duration. That is the real ceiling on simultaneous checkouts — a pool larger than it
+contains connections no request can ever check out. An earlier version sized from
+`Runtime.availableProcessors()` (`min = cores`, `initial = cores * 2`,
+`max = cores * 4`), which on a 32-core machine asked for 128 connections and pre-opened
+64 before any demand existed.
+
+Sizing from CPU count is wrong twice over: it over-provisions badly on a many-core
+machine, and it derives a limit on a **shared** resource — the database server's
+`max_connections` — from a property of one client. Two applications each sizing
+themselves that way will sum past the server's limit without either knowing the other
+exists. PostgreSQL's default `max_connections` is 100, of which 3 are reserved for
+superusers, so two such applications on one 32-core host cannot both start.
+
+**`minPoolSize` is the value that matters most for a shared server.** `maxPoolSize` is
+only reached under load, but the minimum is a permanent floor held open while the
+application sits idle. Keeping it at 1 means the pool grows on demand and shrinks back
+after `DatabaseMaxIdleTime`, costing one connect on the first request after a quiet
+period and nothing else.
+
+**Startup advisory.** When the database is PostgreSQL, the framework reads the server's
+`max_connections` at startup and logs a `WARN` if this application's `DatabaseMaxPoolSize`
+is 25% or more of it. No per-application formula can prevent several applications from
+collectively exhausting a shared server, because each sizes itself in isolation; the
+framework can at least say so on the day the configuration is set rather than leaving it
+to be discovered when some other application mysteriously cannot connect. The check is
+advisory — a server that will not answer never prevents startup.
+
 ### Database Connection Settings
 - Access database configuration via `MainServlet.getEnvironment()`:
   ```groovy
@@ -259,9 +415,12 @@ All compiled classes go to `work/exploded/WEB-INF/classes/`
 ## Development Environment
 
 ### URLs
-- **Frontend (Development):** http://localhost:8000
-- **Backend (Development):** http://localhost:8080
+- **Frontend (Development):** http://localhost:8000 (portBase)
+- **Backend (Development):** http://localhost:8001 (portBase+1)
 - **Backend Log:** tomcat/logs/catalina.out
+
+These are the defaults of the development port block (`portBase = 8000` in
+`Tasks.java`; see "Build System Architecture").
 
 ### Hot Reload
 - **Dynamic loading is limited to `src/main/backend/`** — Kiss does NOT dynamically load all source files. Only files under `src/main/backend/` are detected, compiled, and reloaded while the server is running.
@@ -273,9 +432,10 @@ All compiled classes go to `work/exploded/WEB-INF/classes/`
 ## Key Libraries
 
 ### Backend Dependencies
-- Groovy 4.0.26 - Dynamic language support
-- C3P0 0.11.2 - Database connection pooling
-- Log4j 2.25.3 - Logging framework (log4j 2.x API)
+- Groovy 4.0.28 - Dynamic language support
+- C3P0 0.14.1 - Database connection pooling (requires a matching
+  mchange-commons-java; see "Foreign dependency pruning")
+- Log4j 2.25.4 - Logging framework (log4j 2.x API)
 - PDFBox 3.0.5 - PDF generation
 - Database drivers for PostgreSQL, MySQL, SQLite, MS SQL, Oracle
 
@@ -308,12 +468,27 @@ A method registered with `MainServlet.allowWithoutAuthentication("package/Class"
 
 The front-end completes the loop: any `_ErrorCode = 2` triggers `Server.logout(true)`, which clears `AppState` and routes to `/login` **carrying the current location as the `return`** — so after re-authenticating, the user lands back on the page they were on (session-expiry resume). An intentional logout (`Server.logout()`) goes to `/login` without a return. See [Client-Side Routing](#client-side-routing-router).
 
-**Server-restart detection (boot id).** Sessions live in the in-memory `UserCache`, so a back-end restart invalidates them all — but the *client's* token persists in `AppState`, so without help the browser would resume onto a dead session. To prevent that, `MainServlet.getBootId()` returns a UUID generated once per server start; it's included in every response as `_BootId`. The front-end records it at login (`Server.setBootId` from the `Login` response) and, at startup before routing, `Server.verifyServerInstance()` makes one unauthenticated `LoginRequired` call and compares: if the boot id changed, the back end was restarted, so it clears the persisted session and forces a clean re-login (no resume) with a "server was restarted" notice. A restart while the app is open is still caught on the next call by the normal `_ErrorCode = 2` path.
+### Per-Request Connection Preparation (RequestConnectionPreparer)
+
+`org.kissweb.restServer.RequestConnectionPreparer` is an application-registered
+hook for preparing each REST request's database connection. Register with
+`MainServlet.setRequestConnectionPreparer(...)` (typically from
+`KissInit.groovy`). `prepare(db, userData)` runs after authentication and
+before the service method (userData is null for allowed-without-authentication
+calls with no session); if it throws, the request aborts before any service
+code runs (fail-closed). `release(db)` runs when the request connection is
+closed, before it returns to the pool, to clear any per-connection state.
+Typical use: multi-tenant applications selecting a per-tenant schema (e.g.
+PostgreSQL `search_path`) so every web service stays tenant-neutral.
+Connections obtained outside the request path (cron, `openNewConnection`) are
+not passed to `prepare`.
+
+**Server-restart detection (boot id).** Sessions live in the in-memory `UserCache`, so a back-end restart invalidates them all — but the *client's* token persists in `AppState`, so without help the browser would resume onto a dead session. To prevent that, `MainServlet.getBootId()` returns a UUID generated once per server start; it's included in every response as `_BootId`. The front-end records it at login (`Server.setBootId` from the `Login` response) and, at startup before routing, `Server.verifyServerInstance()` makes one unauthenticated `LoginRequired` call and compares: if the boot id changed, the back end was restarted, so it clears the persisted session and forces a clean re-login (no resume) with a "server was restarted" notice. A restart while the app is open is caught on the next call by the normal `_ErrorCode = 2` path, which logs the user out — and **logout performs a full page reload** of a fresh `index.html` (`Server.logout`), not an in-app re-login. Since a redeploy invalidates the session (routing an open tab through logout) and the reload re-boots on the cache-busted assets (see [Cache Busting](#cache-busting-force-refresh-every-file-on-upgrade)), a long-open tab can never keep running **stale front-end code** against a freshly deployed back end — it picks up the new release automatically. This needs no restart *detection* on the runtime path: reloading on every logout is harmless because cache-busting re-downloads only when `app-version` actually changed (an unchanged release just re-boots from cache), and the reload carries any session-expiry resume target into the login route.
 
 ### CORS and Reverse Proxies (web-secure.xml / web-unsafe.xml)
 
 Kiss ships two web.xml variants in `src/main/core/WEB-INF/`:
-- `web-unsafe.xml` — deployed by `buildSystem()` for development; `cors.allowed.origins = *` (needed because the dev frontend `:8000` and backend `:8080` are different origins)
+- `web-unsafe.xml` — deployed by `buildSystem()` for development; `cors.allowed.origins = *` (needed because the dev frontend `:8000` and backend `:8001` are different origins)
 - `web-secure.xml` — swapped in by `./bld war` for the production WAR; keeps a localhost-only allow-list (`http://localhost:8000,http://localhost:63342`)
 
 **No per-deployment CORS configuration is needed in production.** In the normal single-WAR deployment, frontend and backend are same-origin. Browsers still send an `Origin` header on every POST (the Fetch spec attaches it to all non-GET requests, even same-origin ones), so Tomcat's CorsFilter engages — but it classifies the request as NOT_CORS via `RequestUtil.isSameOrigin()` and never consults the allow-list. The localhost allow-list in `web-secure.xml` is therefore harmless in production; it only blocks genuinely foreign origins.
@@ -322,13 +497,82 @@ Kiss ships two web.xml variants in `src/main/core/WEB-INF/`:
 
 **Split deployments are the one true cross-origin case.** If the frontend is served from a different origin than the backend (`SystemInfo.backendUrl` set), the frontend origin must be added to `cors.allowed.origins` in `web-secure.xml` by hand — no same-origin bypass can apply there.
 
-(An earlier `AllowedOrigins` application.ini key that the build stamped into the deployed web.xml was removed in favor of the RemoteIpFilter approach — it required per-deployment configuration for what the server can determine automatically.)
+There is no `application.ini` key for CORS origins. Scheme/port recovery behind a proxy is handled by `RemoteIpFilter` automatically, so the only case needing configuration is the split deployment above.
+
+### Crypto, Hashing, and MACs — which class to use
+
+Kiss provides four separate, flatly-namespaced classes for everything crypto-shaped, deliberately kept
+distinct rather than merged behind one facade (a facade would put a reversible-encryption call and a
+one-way-hash call one method name apart, which is exactly the ambiguity that invites misuse - e.g.
+someone "just encrypting a password reversibly"). Pick by what you actually need:
+
+| Need | Use |
+|---|---|
+| Recover the original value later (reversible) | `org.kissweb.Crypto` |
+| Store a user's password (never recoverable) | `org.kissweb.PasswordHash` |
+| A plain content fingerprint/digest, no secret key | `org.kissweb.Hash` |
+| A keyed digest/MAC, or a deterministic "blind index" for equality search over an encrypted column | `org.kissweb.Hmac` |
+
+Two small shared utilities support all four: `org.kissweb.ConstantTime` (timing-safe byte-array
+comparison) and `org.kissweb.RandomUtil` (shared `SecureRandom`-backed helpers).
+
+### Reversible Encryption (org.kissweb.Crypto)
+
+`org.kissweb.Crypto` is the framework utility for reversible encryption of strings and byte arrays — data that a legitimate caller must later be able to recover in plaintext (e.g. a value another system needs verbatim). It is the wrong tool for passwords; use `org.kissweb.PasswordHash` for those (see below), since passwords must never be recoverable.
+
+**Algorithm.** AES-GCM (`AES/GCM/NoPadding`), an authenticated cipher (AEAD): every ciphertext carries a 128-bit integrity tag, so tampering or corruption is detected on decrypt rather than silently producing garbage plaintext. Each encrypt call generates a fresh random 12-byte nonce from `SecureRandom` — nonces are never reused, which GCM requires for its security guarantees. Per-value non-determinism (the same plaintext encrypting to different ciphertext each time) comes solely from this nonce, regardless of which key-sourcing path below is used.
+
+**Two ways to supply the key:**
+- **Password-based** (`new Crypto(password)`, `Crypto.deriveOnce(password, salt)`): the AES key is derived from a human-choosable password (and optional salt) via `PBKDF2WithHmacSHA256` (65,536 iterations, 256-bit derived key) — container format `VERSION_1`. PBKDF2 exists to slow down brute-forcing a *low-entropy* secret; it makes sense for an actual password, not for a machine-generated key.
+- **Raw key** (`Crypto.fromKey(byte[])`, `Crypto.fromKeyBase64(String)`): the caller supplies an already high-entropy 256-bit key directly — no PBKDF2, no salt, no per-call KDF cost — container format `VERSION_2`. **This is the recommended path for bulk/high-volume field encryption** (e.g. a master key sourced once from `application.ini` and reused for many rows): applying PBKDF2 to a key that already has nothing for it to usefully slow down only adds latency, and doing it *per row* rather than once is the single most common misuse of this class in practice. Use `Crypto.generateKey()` / `Crypto.generateKeyBase64()` to provision a fresh key. A `VERSION_2` value can only be decrypted by a `fromKey`/`fromKeyBase64`-constructed instance (a password-based instance throws `IllegalStateException`, since there is no password/derivation involved).
+
+**Key-derivation caching.** For password-based instances, the PBKDF2-derived key for a given (password, salt) pair is computed at most once per instance and memoized for every later encrypt/decrypt call with that same salt — no construction path re-derives the key on every call. `Crypto.deriveOnce(password, salt)` additionally computes that derivation *eagerly*, at construction, rather than lazily on first use — useful when a caller wants the one-time PBKDF2 cost to land at a predictable point (e.g. once at the start of a batch) rather than on whichever row happens to run first. Its output is byte-for-byte `VERSION_1`-compatible with (and decryptable by) a plain `new Crypto(password)` instance — it changes only *when* PBKDF2 runs, not the format or the key. A caller who can instead source a genuinely high-entropy key should prefer `fromKey`, which removes the PBKDF2 cost entirely rather than just relocating it.
+
+**`DEFAULT_KDF_SALT` fallback.** When a password-based encrypt/decrypt call supplies no salt, PBKDF2 (which requires a non-empty salt) falls back to a fixed, built-in salt. This remains fully supported for decryption and is unaffected by anything above, but it is a **compatibility fallback for pre-existing callers only** — new code should supply an explicit salt, or (better) a per-value random salt via `encryptWithRandomSalt`, or (better still) use `fromKey`/`fromKeyBase64` where salt/KDF do not apply at all. The first time any `Crypto` instance in a JVM falls back to `DEFAULT_KDF_SALT`, a one-time `WARN` is logged (Log4j) as a nudge to migrate — it never throws and never changes what gets decrypted.
+
+**Self-describing versioned container.** Every value produced by the current format encodes everything decryption needs: `MAGIC(8) | VERSION(1) | saltLen(2) | salt | nonce(12) | ciphertext+tag`. String outputs are additionally prefixed `$KC1$` and Base64-encoded; byte-array outputs carry the same container with a leading `0x00` magic byte. `VERSION_1` (password/PBKDF2) and `VERSION_2` (raw key, `saltLen` always 0) share this same envelope shape; the versioning leaves room for the container format to evolve further without breaking data already at rest.
+
+**Reads a second, older container format.** Decryption also accepts values in an older format — plain `AES/ECB/PKCS5Padding` with a salt+password key derivation — detected by the absence of the `$KC1$` prefix / magic bytes, in which case decryption falls back to that path. This is a read-only capability: every encryption produces one of the AES-GCM formats above, and there is no way to select the older one. A `VERSION_2` (`fromKey`/`fromKeyBase64`) value requires a Kiss build that supports raw-key mode.
+
+**API:**
+
+| Method | Description |
+|---|---|
+| `new Crypto(String password)` | Password-based instance (throws if null/empty); PBKDF2-derived key, `VERSION_1` |
+| `Crypto.deriveOnce(String password, String salt)` | Same as above, but the PBKDF2 derivation for `salt` runs immediately at construction instead of lazily |
+| `Crypto.fromKey(byte[] key256)` / `Crypto.fromKeyBase64(String base64Key256)` | Raw-key instance, no PBKDF2/salt, `VERSION_2`; key must be exactly 256 bits (32 bytes) |
+| `Crypto.generateKey()` / `Crypto.generateKeyBase64()` | Generate a fresh random 256-bit key, for provisioning a `fromKey` master key |
+| `String encrypt(String valueToEnc)` / `String encrypt(String salt, String valueToEnc)` | Encrypt a string, no salt or caller-supplied salt (ignored in raw-key mode); returns Base64 |
+| `String encryptWithRandomSalt(String valueToEnc)` | Encrypt a string with a fresh random salt embedded in the output (recommended when no natural salt exists) |
+| `String decrypt(String encryptedValue)` / `String decrypt(String salt, String encryptedValue)` / `String decryptWithRandomSalt(String encryptedValue)` | Corresponding decrypt calls (must match how the value was encrypted) |
+| `byte[] encrypt(byte[] valueToEnc)` / `byte[] encrypt(String salt, byte[] valueToEnc)` / `byte[] encryptWithRandomSalt(byte[] valueToEnc)` | Byte-array equivalents |
+| `byte[] decrypt(byte[] encryptedValue)` / `byte[] decrypt(String salt, byte[] encryptedValue)` / `byte[] decryptWithRandomSalt(byte[] encryptedValue)` | Byte-array equivalents |
+
+A single `Crypto` instance is safe to share/reuse across threads (each call creates its own `Cipher`; the key-derivation cache is a `ConcurrentHashMap`).
+
+**Usage:**
+```java
+import org.kissweb.Crypto
+
+// Password-based (low-volume / human passphrase)
+Crypto crypto = new Crypto(masterKeyFromApplicationIni)   // never hardcode the password/key
+String enc = crypto.encryptWithRandomSalt(plainTextValue)  // store 'enc'
+String plain = crypto.decryptWithRandomSalt(enc)           // recover later
+
+// Raw key (recommended for bulk/high-volume field encryption)
+String key = Crypto.generateKeyBase64()          // provision once, store in application.ini
+Crypto fast = Crypto.fromKeyBase64(keyFromApplicationIni)
+String enc2 = fast.encryptWithRandomSalt(plainTextValue)
+String plain2 = fast.decryptWithRandomSalt(enc2)
+```
+
+The password/key passed to `Crypto` is itself a secret and must come from `application.ini` (see "Secrets and External Configuration" above), never a literal in source.
 
 ### Password Storage (org.kissweb.PasswordHash)
 
 `org.kissweb.PasswordHash` is the framework utility for storing user passwords. Passwords must be stored using this class — never as plain text, and never with reversible encryption.
 
-**Hashed, not encrypted.** Passwords are hashed one-way with PBKDF2-HMAC-SHA256 and a random per-password salt. There is intentionally no way to recover the original password; authentication only ever *verifies* a candidate. (For reversible encryption of arbitrary data, use `org.kissweb.Crypto` instead — it is the wrong tool for passwords.)
+**Hashed, not encrypted.** Passwords are hashed one-way with PBKDF2-HMAC-SHA256 (600,000 iterations, the OWASP 2023 floor) and a random per-password salt. There is intentionally no way to recover the original password; authentication only ever *verifies* a candidate, in constant time via `org.kissweb.ConstantTime`. (For reversible encryption of arbitrary data, use `org.kissweb.Crypto` instead — it is the wrong tool for passwords.) PBKDF2-HMAC-SHA256 is the framework's only supported algorithm, so that Kiss stays dependency-free (pure JDK) for every application — which is why Argon2id is not offered. `needsRehash` below is nonetheless structured so a second, stronger algorithm can be added as an additional recognized prefix without changing any caller-visible signature.
 
 **API (all static):**
 
@@ -337,6 +581,7 @@ Kiss ships two web.xml variants in `src/main/core/WEB-INF/`:
 | `String hash(String password)` | Hash a plain-text password for storage |
 | `boolean verify(String password, String stored)` | Constant-time verify a candidate against a stored hash |
 | `boolean isHashed(String stored)` | True if a stored value is in the PasswordHash format (vs. a legacy/plain value) |
+| `boolean needsRehash(String stored)` | True if `stored` should be re-hashed and re-saved (e.g. it was hashed at a lower iteration count than the current default, or isn't even in this format at all) |
 
 **Stored format** is a self-describing string so the work factor can be raised over time without invalidating existing hashes:
 ```
@@ -344,7 +589,7 @@ pbkdf2$<iterations>$<Base64(salt)>$<Base64(hash)>
 ```
 Defaults: 600,000 iterations, 16-byte salt, 256-bit derived key. The encoded value is ~80 characters, so the storage column must be at least `varchar(255)`.
 
-**Usage:**
+**Usage — the standard "verify, then opportunistically rehash" pattern:**
 ```groovy
 import org.kissweb.PasswordHash
 
@@ -353,7 +598,85 @@ rec.set("user_password", PasswordHash.hash(plainTextPassword))
 
 // When authenticating:
 boolean ok = PasswordHash.verify(enteredPassword, rec.getString("user_password"))
+if (ok && PasswordHash.needsRehash(rec.getString("user_password")))
+    rec.set("user_password", PasswordHash.hash(enteredPassword))   // upgrade the work factor in place
 ```
+`needsRehash` lets every stored password gradually migrate up to the current work factor as users log in successfully, with no bulk migration required.
+
+### General-Purpose Hashing (org.kissweb.Hash)
+
+`org.kissweb.Hash` provides unkeyed cryptographic digests — SHA-256/384/512 and their SHA-3
+counterparts — for content fingerprints, dedup/change detection, checksums, and cache keys, where the
+input is not secret and speed is a feature, not a liability. Pure JDK: `MessageDigest` has supported
+SHA-3 natively since Java 9, so no external dependency is needed for any algorithm here. **Never use
+`Hash` for passwords** (use `PasswordHash`) **or for anything needing a secret key/proof-of-origin**
+(use `Hmac`) — a plain digest has neither property.
+
+**API (all static):** for each of `sha256`/`sha384`/`sha512`/`sha3_256`/`sha3_512`, three forms exist —
+`byte[] <algo>(byte[] data)` / `<algo>(String data)` (UTF-8), `String <algo>Hex(...)` (lowercase hex),
+and `String <algo>Base64(...)` (standard Base64) — plus streaming/file helpers:
+
+| Method | Description |
+|---|---|
+| `hash(InputStream in, String algorithm)` | Digest a stream in fixed-size chunks (does not load the whole input into memory); caller closes the stream |
+| `hashFile(File file, String algorithm)` / `hashFileHex(File file, String algorithm)` | Digest a file's content, streamed |
+
+**Usage:**
+```java
+import org.kissweb.Hash
+
+byte[] digest = Hash.sha256("some content")
+String hex     = Hash.sha256Hex("some content")
+String b64     = Hash.sha256Base64("some content")
+String fileSha = Hash.hashFileHex(new File("upload.bin"), "SHA-256")
+```
+
+### Keyed Digests / HMAC and the Blind-Index Pattern (org.kissweb.Hmac)
+
+`org.kissweb.Hmac` provides HMAC-SHA256/384/512 (pure JDK, `javax.crypto.Mac` — no dependency). Unlike
+`Hash`, every digest here is parameterized by a secret key: only someone holding the key can produce or
+verify a matching tag for a given message. API shape mirrors `Hash`: `byte[] hmacSha256(byte[] key,
+byte[]|String message)` plus `hmacSha256Hex`/`hmacSha256Base64` (and the `384`/`512` variants). SHA-256
+is the default/recommended algorithm for new work; 384/512 are available when needed.
+
+**The blind-index pattern.** `Crypto`'s AES-GCM is deliberately non-deterministic (a fresh random nonce
+every call), which is exactly what makes it safe — but it also means `WHERE encrypted_column = ?` cannot
+work directly against it. A **blind index** restores equality lookup: store a deterministic, keyed HMAC
+of the (normalized) plaintext alongside the encrypted column, and query against that instead:
+```java
+// write path
+row.encryptedValue = Crypto.fromKey(fieldEncryptionKey).encryptWithRandomSalt(value)   // reversible, for display/export
+row.blindIndex      = Hmac.hmacSha256Hex(fieldIndexKey, normalize(value))              // deterministic, for lookup only
+
+// read path — an indexed equality lookup with no decryption of any row
+String candidateIndex = Hmac.hmacSha256Hex(fieldIndexKey, normalize(candidateValue))
+// ... SELECT ... WHERE blind_index = candidateIndex ...
+```
+Two responsibilities stay with the caller, not `Hmac`, because they are application/data-shape decisions:
+- **Key separation** — `fieldIndexKey` must be a *different* key from `fieldEncryptionKey`. Never reuse
+  one secret for two primitives; each is its own `application.ini` entry.
+- **Normalization** — normalize the plaintext before hashing (trim whitespace, strip punctuation, fix
+  case, etc., as appropriate) so formatting variance doesn't defeat equality lookup. What "normalized"
+  means is inherently specific to the value being indexed.
+
+**Usage:**
+```java
+import org.kissweb.Hmac
+
+byte[] mac = Hmac.hmacSha256(secretKey, "message to authenticate")
+String hex = Hmac.hmacSha256Hex(secretKey, "message to authenticate")
+```
+
+### Constant-Time Comparison (org.kissweb.ConstantTime) and Shared Randomness (org.kissweb.RandomUtil)
+
+`org.kissweb.ConstantTime.equals(byte[] a, byte[] b)` compares two byte arrays without an early return on
+the first differing byte, so its running time depends only on array length, not content — use it (rather
+than `Arrays.equals`/`String.equals`) whenever comparing a MAC, hash, or blind-index value against an
+expected value. `PasswordHash` uses it internally for hash verification.
+
+`org.kissweb.RandomUtil` provides `randomBytes(int n)` and `randomAlphaNumeric(int len)` backed by one
+shared `SecureRandom` instance, so new code needing random key material or tokens has one obvious place
+to get it rather than instantiating another `SecureRandom`.
 
 ### OAuth 2.1 (`org.kissweb.oauth`)
 
@@ -376,7 +699,7 @@ Kiss implements all three OAuth 2.1 roles. Each is inert unless configured (no r
   import org.kissweb.oauth.client.OAuthClient
   OAuthClient client = OAuthClient.forProvider("myprovider")
   if (!client.isAuthorized())
-      redirectBrowserTo(client.beginAuthorization("http://localhost:8080"))
+      redirectBrowserTo(client.beginAuthorization("http://localhost:8001"))
   String token = client.getAccessToken()   // refreshes as needed (discovery/registration happen in beginAuthorization)
   ```
   `getAccessToken()` throws `OAuthAuthorizationRequiredException` when an interactive login is needed.
@@ -399,7 +722,7 @@ Per-tab (`'session'`) is the default. Consequence: a new browser tab starts with
 
 API (all static): `init()`, `set(key, value)` (`undefined` removes), `get(key)`, `has(key)`, `remove(key)`, `keys()`, `clear()`, `backend()`.
 
-**Cross-screen app data** — `Utils.saveData(key, val)` / `getData(key)` / `getAndEraseData(key)` are backed by `AppState` (under a `data.` sub-namespace, so they can't collide with `_uuid`/`_bootId`). So data passed between screens now survives reload and is per-tab — the old in-memory `Utils.globalData` (which a router-driven reload would wipe) is gone.
+**Cross-screen app data** — `Utils.saveData(key, val)` / `getData(key)` / `getAndEraseData(key)` are backed by `AppState` (under a `data.` sub-namespace, so they can't collide with `_uuid`/`_bootId`). Data passed between screens therefore survives reload and is per-tab, which matters because a router-driven reload would wipe anything held only in memory.
 
 `Server.js` consumes it: `Server.setUUID()` writes `_uuid` through `AppState`, the `Server.uuid` getter reads it, and `Server.logout()` calls `AppState.clear()`. The bootstrap (`src/main/frontend/kiss/bootstrap.js`) loads `AppState.js` and calls `AppState.init()` before `Server.js`.
 
@@ -419,14 +742,15 @@ API (all static): `add`, `setDefault`, `setScreenRoot`, `start`, `isStarted`, `g
 
 Dispatch (on `start` and every `hashchange`): match the route → if `auth !== false` and `AppState.get('_uuid')` is absent, `replace('/login?return=<hash>')` → otherwise ensure the shell occupies the body (if any), then `loadPage` the screen. **Session resume** falls out of this: a deep link with a persisted `_uuid` loads straight through, validated lazily by the first `/rest` call (a stale session returns `_ErrorCode 2` → `Server.logout()` → login with a return-URL).
 
-Login/logout integration: `login.js` calls `Router.replace(Router.query().return || '/')` on success (so Back doesn't return to login); `Server.logout()` calls `Router.go('/login')` when the router is active (else falls back to `location.reload()`). The old global `DOMUtils.preventNavigation` back-button blocker was retired from the login screens — Back now navigates between screens (the intended behavior); `preventNavigation` remains available as an opt-in per-screen unsaved-changes guard.
+Login/logout integration: `login.js` calls `Router.replace(Router.query().return || '/')` on success (so Back doesn't return to login); `Server.logout()` performs a full page reload of a fresh `index.html`, landing on the login route via `Router.loginHash(captureReturn)` — the single place the login route's URL form (`#/login`, `#/login?return=...`) is defined, also used by `Router.gotoLogin` (see the boot-id section: the reload is what lets an open tab pick up a new release). The login screens install no back-button blocker: Back navigates between screens, which is the intended behavior under routing. `DOMUtils.preventNavigation` is an opt-in per-screen unsaved-changes guard and should not be applied globally.
 
 ### Browser Security: CSP and Security Headers
 
 The entire Content-Security-Policy is delivered as an **HTTP response header** by `SecurityHeadersFilter` (`src/main/core/org/kissweb/restServer/SecurityHeadersFilter.java`). It self-registers via a `@WebFilter("/*")` annotation (no `web.xml` entry, the same way `MCPServerBase` servlets use `@WebServlet`), so it ships entirely inside the application WAR and needs no servlet-container configuration. CSP is **not** delivered via a `<meta>` tag: the `Content-Security-Policy-Report-Only` form used during rollout is invalid in a meta tag (browsers ignore it), and a header is the single source of truth for the production/Electron deployments (all served by Tomcat).
 
-- The XSS-relevant policy is the constant `SecurityHeadersFilter.CONTENT_SECURITY_POLICY` (`script-src 'self'`, `object-src 'none'`, `style-src 'self' 'unsafe-inline'` for CKEditor/AG-Grid, `img-src 'self' data: blob:` for `binaryCall` images, `connect-src 'self' http://localhost:8080` for cross-origin dev, etc.). A separated production back-end must be added to `connect-src`.
-- It **ships enforcing**: the filter's `CSP_REPORT_ONLY` flag is `false`, sending the XSS policy as `Content-Security-Policy` (violations are blocked, not merely logged). To re-validate after a policy change, set `CSP_REPORT_ONLY = true` to return to `Content-Security-Policy-Report-Only` (violations logged, nothing blocked), exercise every screen until the console is clean, then flip back. **Validate by browsing the app via the Tomcat origin `http://localhost:8080`** — the dev static server on `:8000` (a prebuilt `SimpleWebServer.jar`) cannot set headers, and `file://` has no server, so those contexts receive no CSP.
+- The XSS-relevant policy is the constant `SecurityHeadersFilter.CONTENT_SECURITY_POLICY` (`script-src 'self'`, `object-src 'none'`, `style-src 'self' 'unsafe-inline'` for CKEditor/AG-Grid, `img-src 'self' data: blob:` for `binaryCall` images, `connect-src 'self'` — pages this filter covers are always served by the back end itself, etc.). A separated production back-end must be added to `connect-src`.
+- Per-deployment overrides in `application.ini` (`[main]`): `SecurityHeaders = false` disables the filter entirely (for applications whose front end predates the bootstrap kernel whose hash the CSP pins), and `CspReportOnly = true` switches to report-only. Defaults (absent keys) are enabled + enforcing.
+- It **ships enforcing**: the filter's `CSP_REPORT_ONLY` flag is `false`, sending the XSS policy as `Content-Security-Policy` (violations are blocked, not merely logged). To re-validate after a policy change, set `CSP_REPORT_ONLY = true` to return to `Content-Security-Policy-Report-Only` (violations logged, nothing blocked), exercise every screen until the console is clean, then flip back. **Validate by browsing the app via the Tomcat origin (the back-end port, `http://localhost:8001` with the default port block)** — the dev static server (a prebuilt `SimpleWebServer.jar`) cannot set headers, and `file://` has no server, so those contexts receive no CSP.
 - The filter always also sends the header-only protections: `Content-Security-Policy: frame-ancestors 'none'` + `X-Frame-Options: DENY` (clickjacking, enforced regardless of rollout phase), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Strict-Transport-Security` (only when `request.isSecure()`).
 
 The CSP allows **one** inline script: the byte-stable bootstrap kernel in `index.html`, pinned by a `'sha256-…'` in `script-src` (everything else is external, served under `'self'`). Inline `<style>` is allowed via `style-src 'unsafe-inline'`. The kernel carries no per-deployment values, so its hash is stable; if it is ever edited, recompute the hash and update `SecurityHeadersFilter`.
@@ -435,13 +759,14 @@ The CSP allows **one** inline script: the byte-stable bootstrap kernel in `index
 
 Kiss refreshes **all** downloaded files on a new release from a single version number, with no server configuration (works on the dev static server, `file://`, Tomcat, and Electron). It solves the chicken-and-egg problem — the version that drives busting can't itself be served stale — by keeping the version in the only perpetually-fresh file, `index.html`.
 
-- **Version + master switch** live in `index.html`: `<meta name="kiss-version">` and `<meta name="kiss-cache-control">` (set `false` in dev to disable busting entirely — no `?ver`, no `?now`). These are the only per-deploy cache values. The source ships with `EDIT-1` / `false`.
-- **`./bld war` auto-stamps production values** (`Tasks.stampVersion()`): it sets `kiss-version` to a fresh UUID, `kiss-cache-control` to `true`, and `SystemInfo.releaseDate` to the build date — but only in the WAR's staged copies (`work/exploded`), so the source keeps its `EDIT` placeholders. It edits only the meta values, never the kernel, so the CSP hash is unaffected. Every WAR therefore force-refreshes all clients with no manual version bump. **After the WAR is jarred, `war()` restores the staged `index.html` and `SystemInfo.js` from source** (`copyForce`, mirroring its `web-secure.xml`→jar→`web-unsafe.xml` swap), so `work/exploded` is never left holding production busting. Without this, a later `develop`/`start-backend` — whose `copyTree` is mtime-incremental and won't overwrite the newer stamped files — would silently run dev with production busting (a fixed `?ver` pinning stale code, plus the `?now` double load).
+- **Version + mode** live in `index.html`: `<meta name="app-version">` (the version of the **application**, not of the Kiss framework) and `<meta name="app-mode">` (`development` or `production`; any other value behaves as development). In `production` mode the bust token is `app-version` (stable across a release, so the browser caches everything until the version changes). In `development` mode the kernel instead uses a fresh **per-page-load timestamp** as the token, so dev caches nothing and a plain reload always re-fetches every file. The `?now` freshness redirect for `index.html` itself runs in **both** modes. These are the only per-deploy cache values. The source ships with `EDIT-1` / `development`.
+- **`./bld war` auto-stamps production values** (`Tasks.stampVersion()`): it sets `app-version` to a fresh UUID, `app-mode` to `production`, and `SystemInfo.releaseDate` to the build date — but only in the WAR's staged copies (`work/exploded`), so the source keeps its `EDIT` placeholders. It edits only the meta values, never the kernel, so the CSP hash is unaffected. Every WAR therefore force-refreshes all clients with no manual version bump. **After the WAR is jarred, `war()` restores the staged `index.html` and `SystemInfo.js` from source** (`copyForce`, mirroring its `web-secure.xml`→jar→`web-unsafe.xml` swap), so `work/exploded` is never left holding production busting. Without this, a later `develop`/`start-backend` — whose `copyTree` is mtime-incremental and won't overwrite the newer stamped files — would silently run dev with production busting (a fixed `?ver` pinning stale code, plus the `?now` double load).
 - A **byte-stable inline kernel** in `index.html` keeps `index.html` itself uncached via the `?now` redirect, reads the version from the meta, exposes **`window.cacheBust(url)`** (appends `?ver=<version>`), and loads `kiss/bootstrap.js` busted.
 - **`bootstrap.js`** loads everything else through `bust()`: stylesheets, third-party libs (AG-Grid/CKEditor), `SystemInfo.js`, and all framework + application JS. `getScript`/`getScripts` and `Utils.getHTML` (screens) are busted; `Utils.bustHtmlResources` rewrites relative `<img src>` in loaded HTML *before* insertion (so the un-busted URL is never fetched).
 - **Why it's rock-solid:** the version sits in always-fresh `index.html` and the kernel is byte-stable, so a stale cached `index.html` self-heals — its identical kernel redirects to a fresh copy and re-reads the fresh version. No cacheable file in the chain can pin a stale version.
 - `bootstrap.js` mirrors the meta values onto `SystemInfo.softwareVersion` / `SystemInfo.controlCache` after loading `SystemInfo.js`, so existing references keep working.
-- **Not covered:** `background-image:url()` inside CSS (the browser resolves those static URLs) — those refresh when their stylesheet is re-fetched; and `DOMUtils.fetchHTML` (a generic `$.get` replacement) is outside the screen-loading path. Note that version-busting is global, so every release re-downloads even unchanged third-party libs.
+- **`DOMUtils.fetchHTML`** (a generic `$.get` replacement) participates too: a relative URL is fetched with the standard bust token, conservatively — pre-existing query arguments are preserved (the token is appended), a `#fragment` stays in place, and URLs that are absolute (`http:`, `https:`, `//`), `data:`, `blob:`, or that already carry a `ver=` argument are left untouched. In development it also fetches with `no-store` (mirroring `Utils.getHTML`); on a page not booted through the kernel its behavior is unchanged.
+- **Not covered:** `background-image:url()` inside CSS (the browser resolves those static URLs) — those refresh when their stylesheet is re-fetched, so rename a CSS-referenced asset when changing it in place. Note that version-busting is global, so every release re-downloads even unchanged third-party libs.
 
 ## Model Context Protocol (MCP)
 
@@ -821,6 +1146,8 @@ The framework provides custom HTML components that should be used:
 - `<radio-button>` - Radio button
 - `<list-box>` - List selection
 - `<file-upload>` - File upload control
+- `<search-input>` - Search field with a built-in clear button and optional result list
+- `<smart-chooser>` - Select that auto-switches to a chooser-button + async selection function when its item count is too large for a usable drop-down (also handles zero/one-item cases); low-level and high-level (`setup`/`run`) APIs; the chooser button's appearance (`.btn-smart-chooser`) is not styled by the framework and must be supplied by the application
 
 ### Frontend Utilities
 - **Server.call()** - Make JSON-RPC calls to backend services
@@ -835,6 +1162,74 @@ The framework provides custom HTML components that should be used:
 ### Grid Column Configuration
 - Column widths can be specified as pixels (e.g., `width: 200`)
 - Custom cell renderers supported (e.g., for formatting Yes/No display)
+
+### Design Tokens (`--kiss-ui-*` CSS Custom Properties)
+
+`kiss/Utils.css` declares a `:root { --kiss-ui-bg, --kiss-ui-soft-bg, --kiss-ui-ink, --kiss-ui-muted, --kiss-ui-ring, --kiss-ui-ring-strong, --kiss-ui-accent(-soft), --kiss-ui-success/warning/error(-soft), --kiss-ui-radius, --kiss-ui-shadow(-hover) }` block, and every one of the component-library controls (`panel-card`, `menu-button`, `section-title`, `segmented-control`, `search-input`, `accordion`, `badge-chip`, `avatar`, `toast`) reads its colors/surfaces through `var(--kiss-ui-*)` rather than hardcoding them. Because `kiss/Utils.css` is unconditionally loaded by `bootstrap.js` (`addStylesheet("kiss/Utils.css")`) for every stock Kiss app — before any application CSS runs — these tokens are always defined with sane, fully opaque light-theme defaults. **A brand-new Kiss application that supplies zero application-specific CSS renders every one of these components correctly out of the box**; no application theme file is required to make them legible/opaque. There is no separate `theme/default-theme.css` (or similar) file in the framework itself — all of it lives in `Utils.css`'s own `:root` block. A `kiss/` tree that lacks this block, or lacks `Utils.css` entirely, predates or has drifted from the current component library and needs to be re-synced from the framework source rather than patched locally.
+
+**Pattern for components that read these tokens:**
+- Rely on the `:root` guarantee as the *primary* mechanism — don't redefine or duplicate `--kiss-ui-*` values in component-specific CSS.
+- Give `var(--kiss-ui-*, <literal-default>)` an inline fallback on any declaration where an unexpectedly-missing token would break **function** rather than mere appearance — chiefly an overlay/popover's own background (it must stay opaque so page content underneath can never show through) and text that must stay legible against it. Purely decorative uses (hover tints, ring/shadow accents) don't need an inline fallback, since the framework-wide `:root` guarantee already covers them; adding one to every declaration is needless duplication.
+- When one rule reads a token to control an element's appearance in its default state, and a *different* rule hardcodes an equivalent literal for another state of the same element (e.g. default vs. `:focus-within`/`:hover`), route both through the same `var(--token, literal)` so the two states can never silently diverge if the token is later re-themed — a hardcoded literal alongside a themed variable is a latent inconsistency even when the two currently render identically.
+
+### Starter Theme (`starter-theme.css`) and Utils.css Namespace Cleanliness
+
+`Kiss/src/main/frontend/kiss/starter-theme.css` is opinionated default styling for **bare, unnamespaced HTML
+elements** — plain `input[type=...]`, `textarea`, `label`, and similar raw-markup
+selectors with no `kiss-` class and no `--kiss-` custom property involved. It is loaded
+by `bootstrap.js`'s `loadUtils()` via `addStylesheet("kiss/starter-theme.css")`,
+immediately before `addStylesheet("kiss/Utils.css")`, so a stock application with no
+CSS of its own still gets sensible-looking plain form controls out of the box. Because
+it has no namespace, it also restyles whatever raw markup the host application writes —
+so unlike the rest of the framework's default styling, **an application that owns its
+own input styling may simply stop linking this file** (or override it with a
+later-loaded application stylesheet) without losing anything else Kiss provides.
+
+This split reflects a firm rule for `kiss/Utils.css` itself: **`Utils.css` is
+namespace-clean** — every selector it declares is `kiss-`-prefixed (or scoped under a
+`kiss-`-prefixed class/component), and every custom property it declares is
+`--kiss-`-prefixed (the `--kiss-ui-*` design tokens above, plus any component-internal
+animation/timing tokens a control needs, e.g. a toast or input-clear effect). A `:root`
+block is inherently global, so an unprefixed custom property declared there squats on
+the host application's custom-property namespace — an app that happens to define its
+own same-named variable would silently collide with the framework's. Bare-element
+styling — anything that would restyle raw HTML with no `kiss-` involvement at all —
+belongs in `starter-theme.css`, never in `Utils.css`. When adding new framework CSS,
+classify it this way before deciding which file it goes in.
+
+**`@keyframes` names are global too.** A `@keyframes` identifier lives in the same
+global namespace as a class name (CSS has no scoping mechanism for either), so it is
+just as capable of colliding with a host application's own animation of the same name.
+Every `@keyframes` a component defines must therefore also carry the `kiss-` prefix
+(e.g. `kiss-check-fade`), and every `animation` / `animation-name` declaration that
+plays it must be updated to match — a mismatch silently animates nothing rather than
+throwing, so it is easy to miss without grepping for the old name after a rename. If a
+component's `animation-name` ever refers to a `@keyframes` block that has been removed
+or commented out, prefer deleting the dead `animation-*` declaration over leaving a
+dangling reference (including the stray global name it introduces) or "fixing" it by
+reviving a previously-disabled animation — the latter is a behavior change, not a
+namespace cleanup.
+
+**Bare state-modifier classes (`has-value`, `is-open`, `is-active`, `is-leaving`, etc.)
+and `data-*` styling-hook attributes are allowed to stay unprefixed, but only as long as
+every CSS selector that reads them compounds them with a `kiss-`-prefixed class** (e.g.
+`.kiss-search-control.has-value`, `.kiss-menu-button.is-open`, never a bare `.has-value`
+or `[data-state]` rule on its own). Under that discipline an application's own unrelated
+`.has-value`/`.is-open`/etc. class cannot match a Kiss selector, because the compound
+requires the Kiss base class too — so the collision risk is theoretical, not real, and
+these are intentionally left unprefixed rather than becoming `kiss-has-value` etc. If a
+future rule is ever written that matches one of these state classes standalone (no
+compounded `kiss-` class in the same selector), that selector becomes a real global leak
+and should be fixed at that point — audit for this whenever adding a new state-modifier
+class.
+
+**An app-facing class that predates the `kiss-` convention may be relocated instead of
+renamed** when application authors are expected to write it by hand in their own markup
+(as opposed to a class only ever emitted by framework component JavaScript). Renaming a
+class an application's existing HTML already references would silently unstyle that
+markup on upgrade; moving the rule to `starter-theme.css` (unnamespaced by design, and
+safe for an application to stop linking) preserves compatibility while still keeping
+`Utils.css` itself namespace-clean.
 
 ## Framework Philosophy
 
@@ -1180,7 +1575,7 @@ Utils.yesNo('Title', 'Question text', yesFun, noFun);
 - Creates modal DOM structure if it doesn't exist (id: `yesno-modal`)
 - Dialog is draggable via `Utils.makeDraggable()`
 - Mobile-responsive: adjusts width based on screen size
-- Uses custom CSS classes: `msg-modal`, `msg-modal-content`, `msg-modal-header`, etc.
+- Uses custom CSS classes: `kiss-msg-modal`, `kiss-msg-modal-content`, `kiss-msg-modal-header`, etc.
 
 ### Utils.makeDraggable() - Draggable Windows
 Makes a window or dialog draggable by the header/title bar.
@@ -1206,7 +1601,7 @@ Utils.makeDraggable(
 - Uses the Pointer Events API (`pointerdown`/`pointermove`/`pointerup`/`pointercancel`) so mouse, touch, and pen input are all handled by a single code path
 - Calls `header.setPointerCapture(e.pointerId)` on `pointerdown` so all subsequent move/up events are delivered to the header element even when the pointer crosses into a child iframe; without capture, crossing into an iframe causes the parent document to lose mouse events and the drag "sticks" after the button is released
 - `setPointerCapture` is guarded (`if (header.setPointerCapture)`) for safety, though all target browsers (Chrome, Firefox, Safari, Edge) support it
-- Sets `header.style.touchAction = 'none'` to suppress browser pan/scroll gestures while dragging on touch devices (replaces the old `touchstart` `e.preventDefault()` approach)
+- Sets `header.style.touchAction = 'none'` to suppress browser pan/scroll gestures while dragging on touch devices — this is the mechanism to use, not a `touchstart` `e.preventDefault()` handler
 - Sets cursor style to 'all-scroll' on header
 - Stores per-drag handler references and removes them in `endDrag` (called on both `pointerup` and `pointercancel`) to prevent listener accumulation across repeated drags
 - Calls `header.releasePointerCapture(e.pointerId)` in `endDrag` to cleanly release capture
@@ -1286,7 +1681,7 @@ The `Utils.popup_open()` function requires popups to have exactly TWO direct chi
 ```html
 <!-- WRONG: Single wrapper div causes "Cannot set properties of undefined" error -->
 <popup id="my-popup">
-    <div class="popup-content">
+    <div class="kiss-popup-content">
         <!-- This single wrapper div breaks the popup -->
     </div>
 </popup>
@@ -1389,4 +1784,4 @@ ServicePassword = ""    # correct
 
 ---
 
-*Last Updated: 2026-07-09*
+*Last Updated: 2026-08-01*
