@@ -178,3 +178,6 @@ src/main/backend/application.ini
 src/main/backend/DB.sqlite
 # Local demo login credentials (plaintext passwords for seeded dev accounts).
 /DemoCredentials.txt
+
+# Code-RAG local index files (written by bld; machine-local, not part of the project)
+CLAUDE.local.md
